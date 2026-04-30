@@ -1,0 +1,179 @@
+{
+  "theme_and_archetype": {
+    "theme": "Light",
+    "archetype": "4 (Swiss & High-Contrast)",
+    "reasoning": "Real estate management and financial tracking require absolute clarity, authority, and function-first design. The Swiss archetype provides high-contrast data visualization, making complex property matrices and financial splits highly legible without visual clutter."
+  },
+  "color_system": {
+    "base": {
+      "background": "#F9F9FB",
+      "surface": "#FFFFFF",
+      "foreground": "#0A0A0A",
+      "muted": "#F3F4F6",
+      "muted_foreground": "#6B7280"
+    },
+    "brand_primary": {
+      "DEFAULT": "#0A0A0A",
+      "hover": "#262626",
+      "foreground": "#FFFFFF"
+    },
+    "accents": {
+      "positive_finance": "#059669",
+      "positive_bg": "#D1FAE5",
+      "warning_alert": "#D97706",
+      "warning_bg": "#FEF3C7",
+      "destructive": "#DC2626",
+      "destructive_bg": "#FEE2E2",
+      "ai_accent": "#2563EB",
+      "ai_accent_light": "#DBEAFE"
+    },
+    "borders": {
+      "DEFAULT": "#E5E7EB",
+      "focus": "#0A0A0A"
+    },
+    "rules": {
+      "tinted_grey": "All greys must have a slight cool blue undertone to feel architectural rather than muddy.",
+      "contrast": "Text below 18px must meet WCAG AA 4.5:1. Use APCA contrast calculator if in doubt. No gray-on-gray data.",
+      "gradients": "BANNED. Use flat colors or 1px strokes. Only the 'AI Upload' component can use a subtle blue mesh glow."
+    }
+  },
+  "typography": {
+    "strategy": "Swiss Brutalist (Tech/App)",
+    "fonts": {
+      "headings": "Cabinet Grotesk",
+      "body": "IBM Plex Sans",
+      "mono": "JetBrains Mono"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter leading-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl font-semibold tracking-tight",
+      "h4": "text-lg font-semibold",
+      "body": "text-sm sm:text-base leading-relaxed text-foreground",
+      "data_labels": "text-xs font-mono uppercase tracking-[0.2em] text-muted-foreground",
+      "financial_digits": "font-mono font-medium tracking-tight"
+    }
+  },
+  "layout_and_spacing": {
+    "strategy": "The Control Room Grid (Mode B)",
+    "container": "w-full max-w-[1600px] mx-auto p-4 md:p-8",
+    "grid_system": {
+      "base": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6",
+      "spans": {
+        "kpi_summary": "col-span-1",
+        "main_data_table": "col-span-full lg:col-span-3",
+        "side_panel": "col-span-full lg:col-span-1"
+      }
+    },
+    "spacing_scale": {
+      "padding_inner": "p-6",
+      "section_gap": "gap-8 md:gap-12",
+      "element_gap": "gap-4"
+    },
+    "rules": {
+      "optical_alignment": "Align icons and text optically. Padding inside bordered containers must prevent text collision.",
+      "f_pattern": "Place the North Star Metric (Total Income / Occupancy) at top-left."
+    }
+  },
+  "surfaces_and_micro_themes": {
+    "dashboard_cards": {
+      "style": "Neumorphism Tactile Twist",
+      "background": "bg-white",
+      "border": "border border-border/60",
+      "shadow": "shadow-sm hover:shadow-md transition-shadow duration-200",
+      "radius": "rounded-lg"
+    },
+    "tables_and_data": {
+      "style": "Grid Borders (Technical Look)",
+      "wrapper": "border border-border rounded-lg overflow-hidden bg-white",
+      "rows": "border-b border-border hover:bg-muted/50 transition-colors",
+      "headers": "bg-muted text-data_labels border-b border-border"
+    },
+    "ai_upload_zone": {
+      "style": "The Tracing Beam / Glow",
+      "wrapper": "relative border-2 border-dashed border-ai_accent/40 bg-ai_accent_light/20 rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-ai_accent_light/40 hover:border-ai_accent"
+    }
+  },
+  "component_rules": {
+    "buttons": "Shadcn based. Primary buttons are solid black (bg-primary text-primary-foreground). Never use rounded-full for main CTA, use rounded-md.",
+    "inputs_and_forms": "Shadcn components. Use flat borders, no heavy shadows. Add focus-visible:ring-2 focus-visible:ring-primary.",
+    "tables": "Must use sticky headers for scrolling. Financial columns (Rents, IVA, Net) MUST be right-aligned.",
+    "tabs": "Override Shadcn default h-9 to h-auto. Use pill-style or clean underline tabs for Properties vs Units.",
+    "badges": "Flat background with high contrast text. Statuses: Occupied (Green), Vacant (Gray), Vacation (Blue)."
+  },
+  "feature_specific_designs": {
+    "properties_and_units_integration": {
+      "pattern": "Progressive Disclosure (Accordion/Nested Table)",
+      "design": "Properties act as parent rows. Clicking a property expands a sub-table displaying its rentable units (Local, Estudio, Dúplex, Dormitorio). This prevents navigating away and keeps context."
+    },
+    "dashboard_kpis": {
+      "metrics": ["Total Inmuebles", "Total Unidades", "Ingresos del Mes (Net)", "Ocupación %"],
+      "layout": "Top row, 4-column grid. Clean, large digits (font-mono) with micro-trend indicators."
+    },
+    "ai_invoice_upload": {
+      "location": "Prominent floating action block or dedicated 'Facturación' section.",
+      "interaction": "Drag & drop zone. Upon upload, simulate an 'OCR Scanning' micro-interaction, followed by a summary card showing the auto-calculated split among tenants based on their predefined percentages.",
+      "visuals": "Use the 'ai_invoice_upload_empty' image as a background graphic for the empty state."
+    },
+    "financials_iva_retenciones": {
+      "display": "In Collections/Rentas view, use a stacked or detailed column approach: [Bruto] -> [+ IVA] -> [- Retenciones] -> [Neto]. Net amount should be bold."
+    },
+    "vacation_rental_calendar": {
+      "design": "A timeline/Gantt chart view for units marked as 'Vacacional'. Color-coded by status (Booked, Blocked, Available). Configurable sidebar for Daily/Weekly/Monthly rate management."
+    }
+  },
+  "media_and_images": {
+    "hero_backgrounds_and_empty_states": [
+      {
+        "url": "https://static.prod-images.emergentagent.com/jobs/ff0e97aa-3f6d-4d6e-829d-cb1de03dd45a/images/cc534b5b06a8bca913e2d8f1a3a64542851592d7f9fe87b490d85f05557de89c.png",
+        "description": "Abstract architectural geometric composition",
+        "usage": "Use as a subtle background for the Login/Welcome screen or empty states in the Dashboard."
+      },
+      {
+        "url": "https://static.prod-images.emergentagent.com/jobs/ff0e97aa-3f6d-4d6e-829d-cb1de03dd45a/images/2814de651e29f5dcf1fc9254bdb6b00bd1a02865181d80c128775344dabd7a94.png",
+        "description": "Blank invoice receipt with glowing scanning line",
+        "usage": "Display inside the AI Subir Factura dropzone when no file is uploaded to guide the user visually."
+      }
+    ],
+    "property_placeholders": [
+      {
+        "url": "https://images.pexels.com/photos/13722888/pexels-photo-13722888.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Sleek modern living room",
+        "usage": "Cover image for Dúplex or Premium properties in list view."
+      },
+      {
+        "url": "https://images.pexels.com/photos/32418264/pexels-photo-32418264.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Stylish apartment interior",
+        "usage": "Cover image for Estudios or standard properties."
+      }
+    ],
+    "tenant_avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1668800458317-34ef5976c422?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3RzJTIwcGVvcGxlfGVufDB8fHx8MTc3NzU3MTY0N3ww&ixlib=rb-4.1.0&q=85",
+        "usage": "Avatar for Tenant 1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1609371497456-3a55a205d5eb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3RzJTIwcGVvcGxlfGVufDB8fHx8MTc3NzU3MTY0N3ww&ixlib=rb-4.1.0&q=85",
+        "usage": "Avatar for Tenant 2"
+      }
+    ]
+  },
+  "motion_and_interactions": {
+    "hover": "Subtle transform translate-y-[-2px] on cards with a shadow-md elevation.",
+    "page_transitions": "Fade-in with slight vertical slide (framer-motion).",
+    "ai_processing": "When AI is reading the invoice, display a skeleton loader with a pulsing blue border and shimmering text 'GPT-4o Analizando factura...'."
+  },
+  "testing_attributes": {
+    "rule": "All interactive and key informational elements MUST include a 'data-testid' attribute.",
+    "examples": ["data-testid='btn-upload-invoice'", "data-testid='tab-properties'", "data-testid='kpi-total-income'"]
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the JSON structures and E1 design methodologies provided.",
+    "Do NOT use placeholder images. Use the exact URLs provided in 'media_and_images'.",
+    "Build a Left-Sidebar layout for navigation (Dashboard, Inmuebles, Facturación, Calendario Vacacional).",
+    "The Dashboard should contain only the KPIs at the top and actionable widgets (like AI Factura Upload), completely removing old tables of pending rents.",
+    "For the 'Inmuebles' section, implement Shadcn Data Table with expandable rows. Parent row = Inmueble. Expanded content = Sub-table of Unidades (Local, Estudio, Dúplex, Dormitorio).",
+    "Implement the 'Subir Factura' feature as a prominent AI widget. The mock flow should show uploading a file -> parsing state -> displaying a split table based on tenant percentages.",
+    "Ensure all financial tables calculate or display 'Bruto', 'IVA', 'Retenciones', and 'Neto'."
+  ]
+}

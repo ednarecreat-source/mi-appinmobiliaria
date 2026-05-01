@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Building2, ChevronDown, ChevronRight, Home, Pencil, Trash2, BedDouble, Banknote, Shield, Wrench, Zap, Landmark, Receipt } from "lucide-react";
 import { toast } from "sonner";
+import { CURRENCIES } from "@/lib/api";
 
 const UNIT_TYPES = ["Local", "Estudio", "Duplex", "Dormitorio"];
 const CATEGORIES = [
@@ -29,7 +30,7 @@ const FREQ_LABEL = { monthly: "/mes", quarterly: "/trim", yearly: "/año" };
 
 function PropertyForm({ initial, onSaved, onClose }) {
   const [f, setF] = useState(
-    initial || { name: "", address: "", category: "residential", description: "", image_url: "" }
+    initial || { name: "", address: "", category: "residential", currency: "EUR", description: "", image_url: "" }
   );
   const save = async () => {
     if (!f.name || !f.address) return toast.error("Nombre y dirección son requeridos");
@@ -53,14 +54,25 @@ function PropertyForm({ initial, onSaved, onClose }) {
         <Label>Dirección</Label>
         <Input data-testid="prop-address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
       </div>
-      <div>
-        <Label>Categoría</Label>
-        <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v })}>
-          <SelectTrigger data-testid="prop-category"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {CATEGORIES.map((c) => <SelectItem key={c.v} value={c.v}>{c.l}</SelectItem>)}
-          </SelectContent>
-        </Select>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label>Categoría</Label>
+          <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v })}>
+            <SelectTrigger data-testid="prop-category"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {CATEGORIES.map((c) => <SelectItem key={c.v} value={c.v}>{c.l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Divisa</Label>
+          <Select value={f.currency} onValueChange={(v) => setF({ ...f, currency: v })}>
+            <SelectTrigger data-testid="prop-currency"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
       <div>
         <Label>URL imagen (opcional)</Label>
@@ -331,7 +343,7 @@ export default function Properties() {
                     {CATEGORY_LABELS[p.category] || p.category}
                   </span>
                 </div>
-                <div className="text-sm mono">{us.length}</div>
+                <div className="text-sm mono">{us.length} <span className="text-[10px] text-ink-muted">· {p.currency}</span></div>
                 <div><PercentBadge total={total} /></div>
                 <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                   <Button size="icon" variant="ghost" className="hover:bg-sage-50" onClick={() => { setEditProp(p); setPropOpen(true); }} data-testid={`edit-prop-${p.id}`}>
@@ -368,14 +380,14 @@ export default function Properties() {
                           <div className="mt-4 text-sm mono">
                             {u.rental_mode === "vacation" ? (
                               <div className="space-y-1 text-ink-soft">
-                                <div className="flex justify-between"><span>Día</span><b className="text-ink">{eur(u.daily_rate)}</b></div>
-                                <div className="flex justify-between"><span>Semana</span><b className="text-ink">{eur(u.weekly_rate)}</b></div>
-                                <div className="flex justify-between"><span>Mes</span><b className="text-ink">{eur(u.monthly_rate)}</b></div>
+                                <div className="flex justify-between"><span>Día</span><b className="text-ink">{eur(u.daily_rate, p.currency)}</b></div>
+                                <div className="flex justify-between"><span>Semana</span><b className="text-ink">{eur(u.weekly_rate, p.currency)}</b></div>
+                                <div className="flex justify-between"><span>Mes</span><b className="text-ink">{eur(u.monthly_rate, p.currency)}</b></div>
                               </div>
                             ) : (
                               <div className="flex justify-between text-ink-soft">
                                 <span>Renta mensual</span>
-                                <b className="text-ink number-pill">{eur(u.rent_amount)}</b>
+                                <b className="text-ink number-pill">{eur(u.rent_amount, p.currency)}</b>
                               </div>
                             )}
                           </div>
@@ -423,12 +435,12 @@ export default function Properties() {
                                   </div>
                                 </div>
                                 <div className="text-right">
-                                  <div className="mono font-bold text-sm">{eur(e.amount)}</div>
+                                  <div className="mono font-bold text-sm">{eur(e.amount, p.currency)}</div>
                                   <div className="text-[10px] text-ink-soft mono">{FREQ_LABEL[e.frequency]}</div>
                                 </div>
                               </div>
                               <div className="mt-3 flex items-center justify-between text-xs text-ink-soft">
-                                <span>~ {eur(monthly(e))}/mes</span>
+                                <span>~ {eur(monthly(e), p.currency)}/mes</span>
                                 <div className="flex gap-0.5">
                                   <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditExp(e); setExpProp(p); setExpOpen(true); }}><Pencil className="w-3.5 h-3.5" /></Button>
                                   <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => delExp(e)}><Trash2 className="w-3.5 h-3.5 text-terracotta" /></Button>

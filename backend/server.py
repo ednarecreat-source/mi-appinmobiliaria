@@ -15,6 +15,11 @@ from datetime import datetime, timezone, date
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
+try:
+    import fitz  # PyMuPDF
+except Exception:
+    fitz = None
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -231,6 +236,18 @@ async def list_tenants(property_id: Optional[str] = None):
     return rows
 
 
+@api_router.get("/tenants/percentage-summary")
+async def tenants_percentage_summary():
+    """Returns sum of split_percentage per property_id."""
+    summary: dict = {}
+    async for t in db.tenants.find({}, {"_id": 0, "property_id": 1, "split_percentage": 1}):
+        pid = t.get("property_id") or ""
+        if not pid:
+            continue
+        summary[pid] = summary.get(pid, 0.0) + float(t.get("split_percentage", 0))
+    return summary
+
+
 @api_router.post("/tenants", response_model=Tenant)
 async def create_tenant(payload: TenantIn):
     obj = Tenant(**payload.model_dump())
@@ -292,9 +309,28 @@ async def analyze_invoice(
     if not content:
         raise HTTPException(400, "Archivo vacío")
 
-    mime = file.content_type or "image/jpeg"
-    if mime not in ("image/jpeg", "image/png", "image/webp", "image/jpg"):
-        # default assumption
+    mime = (file.content_type or "").lower()
+    filename = (file.filename or "").lower()
+    is_pdf = mime == "application/pdf" or filename.endswith(".pdf") or content[:5] == b"%PDF-"
+
+    if is_pdf:
+        if fitz is None:
+            raise HTTPException(500, "Soporte PDF no disponible (PyMuPDF)")
+        try:
+            doc = fitz.open(stream=content, filetype="pdf")
+            if doc.page_count == 0:
+                raise HTTPException(400, "PDF vacío")
+            page = doc.load_page(0)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # ~150dpi
+            img_bytes = pix.tobytes("jpeg")
+            doc.close()
+            content = img_bytes
+            mime = "image/jpeg"
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"No se pudo leer el PDF: {e}")
+    elif mime not in ("image/jpeg", "image/png", "image/webp", "image/jpg"):
         mime = "image/jpeg"
 
     b64 = base64.b64encode(content).decode("utf-8")

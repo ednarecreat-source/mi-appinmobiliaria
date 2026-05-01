@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, eur } from "@/lib/api";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Plus, Building2, ChevronDown, ChevronRight, Home, Pencil, Trash2 } from "lucide-react";
+import { Plus, Building2, ChevronDown, ChevronRight, Home, Pencil, Trash2, BedDouble } from "lucide-react";
 import { toast } from "sonner";
 
 const UNIT_TYPES = ["Local", "Estudio", "Duplex", "Dormitorio"];
@@ -63,7 +61,7 @@ function PropertyForm({ initial, onSaved, onClose }) {
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>Cancelar</Button>
-        <Button onClick={save} className="bg-black hover:bg-neutral-800" data-testid="save-property">Guardar</Button>
+        <Button onClick={save} className="btn-primary" data-testid="save-property">Guardar</Button>
       </DialogFooter>
     </div>
   );
@@ -72,16 +70,8 @@ function PropertyForm({ initial, onSaved, onClose }) {
 function UnitForm({ initial, propertyId, onSaved, onClose }) {
   const [f, setF] = useState(
     initial || {
-      property_id: propertyId,
-      name: "",
-      unit_type: "Estudio",
-      rental_mode: "long_term",
-      rent_amount: 0,
-      daily_rate: 0,
-      weekly_rate: 0,
-      monthly_rate: 0,
-      status: "vacant",
-      description: "",
+      property_id: propertyId, name: "", unit_type: "Estudio", rental_mode: "long_term",
+      rent_amount: 0, daily_rate: 0, weekly_rate: 0, monthly_rate: 0, status: "vacant", description: "",
     }
   );
   const save = async () => {
@@ -91,19 +81,13 @@ function UnitForm({ initial, propertyId, onSaved, onClose }) {
       if (initial?.id) await api.put(`/units/${initial.id}`, payload);
       else await api.post("/units", payload);
       toast.success("Unidad guardada");
-      onSaved();
-      onClose();
-    } catch {
-      toast.error("Error al guardar");
-    }
+      onSaved(); onClose();
+    } catch { toast.error("Error al guardar"); }
   };
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label>Nombre</Label>
-          <Input data-testid="unit-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-        </div>
+        <div><Label>Nombre</Label><Input data-testid="unit-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
         <div>
           <Label>Tipo</Label>
           <Select value={f.unit_type} onValueChange={(v) => setF({ ...f, unit_type: v })}>
@@ -149,7 +133,7 @@ function UnitForm({ initial, propertyId, onSaved, onClose }) {
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>Cancelar</Button>
-        <Button onClick={save} className="bg-black hover:bg-neutral-800" data-testid="save-unit">Guardar</Button>
+        <Button onClick={save} className="btn-primary" data-testid="save-unit">Guardar</Button>
       </DialogFooter>
     </div>
   );
@@ -157,17 +141,32 @@ function UnitForm({ initial, propertyId, onSaved, onClose }) {
 
 function StatusBadge({ status }) {
   const map = {
-    vacant: { l: "Libre", c: "bg-neutral-100 text-neutral-700" },
-    occupied: { l: "Ocupado", c: "bg-emerald-100 text-emerald-700" },
-    vacation: { l: "Vacacional", c: "bg-blue-100 text-blue-700" },
+    vacant: { l: "Libre", c: "bg-cream-100 text-ink-soft border-border" },
+    occupied: { l: "Ocupado", c: "bg-sage-100 text-sage-700 border-sage-200" },
+    vacation: { l: "Vacacional", c: "bg-terracotta-soft text-terracotta border-terracotta/30" },
   };
   const m = map[status] || map.vacant;
-  return <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${m.c}`}>{m.l}</span>;
+  return <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${m.c}`}>{m.l}</span>;
 }
+
+function PercentBadge({ total }) {
+  if (total === undefined) return null;
+  if (total === 0) return null;
+  if (Math.abs(total - 100) < 0.01) {
+    return <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-sage-100 text-sage-700 border border-sage-200">✓ 100%</span>;
+  }
+  if (total > 100) {
+    return <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-terracotta-soft text-terracotta border border-terracotta/30" title="La suma supera 100%">⚠ {total.toFixed(0)}%</span>;
+  }
+  return <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-cream-100 text-ink-soft border border-border" title="Quedan inquilinos por asignar">{total.toFixed(0)}%</span>;
+}
+
+const CATEGORY_LABELS = { residential: "Residencial", commercial: "Comercial", vacation: "Vacacional" };
 
 export default function Properties() {
   const [properties, setProperties] = useState([]);
   const [units, setUnits] = useState([]);
+  const [pctSummary, setPctSummary] = useState({});
   const [expanded, setExpanded] = useState({});
   const [propOpen, setPropOpen] = useState(false);
   const [editProp, setEditProp] = useState(null);
@@ -176,9 +175,10 @@ export default function Properties() {
   const [editUnit, setEditUnit] = useState(null);
 
   const load = async () => {
-    const [p, u] = await Promise.all([api.get("/properties"), api.get("/units")]);
+    const [p, u, s] = await Promise.all([api.get("/properties"), api.get("/units"), api.get("/tenants/percentage-summary")]);
     setProperties(p.data);
     setUnits(u.data);
+    setPctSummary(s.data || {});
   };
   useEffect(() => { load(); }, []);
 
@@ -198,98 +198,116 @@ export default function Properties() {
   };
 
   return (
-    <div className="space-y-6 fade-in">
+    <div className="space-y-8 fade-in">
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Inmuebles & Unidades</h1>
-          <p className="text-sm text-neutral-500 mt-1">Gestiona tus inmuebles. Haz click en una fila para ver sus unidades alquilables.</p>
+          <div className="text-xs font-mono uppercase tracking-[0.25em] text-sage-600 mb-2">Cartera</div>
+          <h1 className="text-4xl font-serif font-bold tracking-tight">Inmuebles & unidades</h1>
+          <p className="text-sm text-ink-soft mt-2">Haz click en un inmueble para ver sus unidades alquilables.</p>
         </div>
         <Dialog open={propOpen} onOpenChange={(v) => { setPropOpen(v); if (!v) setEditProp(null); }}>
           <DialogTrigger asChild>
-            <Button className="bg-black hover:bg-neutral-800" data-testid="btn-new-property">
-              <Plus className="w-4 h-4 mr-1" /> Nuevo Inmueble
+            <Button className="btn-primary h-11 px-5" data-testid="btn-new-property">
+              <Plus className="w-4 h-4 mr-1" /> Nuevo inmueble
             </Button>
           </DialogTrigger>
           <DialogContent>
-            <DialogHeader><DialogTitle>{editProp ? "Editar" : "Nuevo"} Inmueble</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>{editProp ? "Editar" : "Nuevo"} inmueble</DialogTitle></DialogHeader>
             <PropertyForm initial={editProp} onSaved={load} onClose={() => { setPropOpen(false); setEditProp(null); }} />
           </DialogContent>
         </Dialog>
       </div>
 
-      <Card className="overflow-hidden border border-border/60">
-        <div className="grid grid-cols-[40px_1fr_1.2fr_130px_120px_120px] text-[11px] font-mono uppercase tracking-[0.2em] text-neutral-500 bg-neutral-50 border-b border-border px-4 py-3">
+      <div className="card-soft overflow-hidden">
+        <div className="grid grid-cols-[40px_1.4fr_1.3fr_140px_120px_140px_120px] text-[11px] font-mono uppercase tracking-[0.2em] text-ink-muted bg-sage-50 border-b border-border px-5 py-3.5">
           <div></div>
           <div>Inmueble</div>
           <div>Dirección</div>
           <div>Categoría</div>
           <div>Unidades</div>
+          <div>% Asignado</div>
           <div className="text-right">Acciones</div>
         </div>
         {properties.length === 0 && (
-          <div className="p-10 text-center text-sm text-neutral-500">No hay inmuebles. Crea el primero.</div>
+          <div className="p-12 text-center text-sm text-ink-soft">No hay inmuebles. Crea el primero.</div>
         )}
         {properties.map((p) => {
           const us = unitsOf(p.id);
           const isOpen = expanded[p.id];
+          const total = pctSummary[p.id] || 0;
           return (
             <div key={p.id} className="border-b border-border last:border-b-0" data-testid={`property-row-${p.id}`}>
               <div
-                className="grid grid-cols-[40px_1fr_1.2fr_130px_120px_120px] items-center px-4 py-3 hover:bg-neutral-50 cursor-pointer"
+                className="grid grid-cols-[40px_1.4fr_1.3fr_140px_120px_140px_120px] items-center px-5 py-4 hover:bg-sage-50/60 cursor-pointer transition-colors"
                 onClick={() => setExpanded({ ...expanded, [p.id]: !isOpen })}
               >
-                <div>{isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</div>
-                <div className="font-semibold flex items-center gap-2"><Building2 className="w-4 h-4" /> {p.name}</div>
-                <div className="text-sm text-neutral-600 truncate">{p.address}</div>
-                <div><Badge variant="outline" className="capitalize">{p.category}</Badge></div>
+                <div className="text-ink-muted">{isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</div>
+                <div className="font-serif font-bold text-base flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-sage-100 grid place-items-center text-sage-700">
+                    <Building2 className="w-4 h-4" />
+                  </div>
+                  {p.name}
+                </div>
+                <div className="text-sm text-ink-soft truncate">{p.address}</div>
+                <div>
+                  <span className="px-2.5 py-1 rounded-full text-[11px] bg-sage-50 border border-border text-sage-700 capitalize">
+                    {CATEGORY_LABELS[p.category] || p.category}
+                  </span>
+                </div>
                 <div className="text-sm mono">{us.length}</div>
+                <div><PercentBadge total={total} /></div>
                 <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                  <Button size="icon" variant="ghost" onClick={() => { setEditProp(p); setPropOpen(true); }} data-testid={`edit-prop-${p.id}`}>
+                  <Button size="icon" variant="ghost" className="hover:bg-sage-50" onClick={() => { setEditProp(p); setPropOpen(true); }} data-testid={`edit-prop-${p.id}`}>
                     <Pencil className="w-4 h-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" onClick={() => delProp(p)} data-testid={`del-prop-${p.id}`}>
-                    <Trash2 className="w-4 h-4 text-red-600" />
+                  <Button size="icon" variant="ghost" className="hover:bg-terracotta-soft" onClick={() => delProp(p)} data-testid={`del-prop-${p.id}`}>
+                    <Trash2 className="w-4 h-4 text-terracotta" />
                   </Button>
                 </div>
               </div>
               {isOpen && (
-                <div className="bg-neutral-50/60 border-t border-border px-4 py-4 fade-in">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-neutral-500">Unidades alquilables</div>
-                    <Button size="sm" variant="outline" onClick={() => { setUnitProp(p); setEditUnit(null); setUnitOpen(true); }} data-testid={`add-unit-${p.id}`}>
+                <div className="bg-sage-50/40 border-t border-border px-5 py-5 fade-in">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-sage-600">Unidades alquilables</div>
+                    <Button size="sm" variant="outline" className="bg-white" onClick={() => { setUnitProp(p); setEditUnit(null); setUnitOpen(true); }} data-testid={`add-unit-${p.id}`}>
                       <Plus className="w-3.5 h-3.5 mr-1" /> Añadir unidad
                     </Button>
                   </div>
                   {us.length === 0 ? (
-                    <div className="text-sm text-neutral-500 py-4">Sin unidades aún.</div>
+                    <div className="text-sm text-ink-soft py-6 text-center">Sin unidades aún.</div>
                   ) : (
-                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {us.map((u) => (
-                        <div key={u.id} className="bg-white border border-border rounded-md p-4" data-testid={`unit-${u.id}`}>
+                        <div key={u.id} className="card-soft p-5" data-testid={`unit-${u.id}`}>
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 font-semibold"><Home className="w-4 h-4" /> {u.name}</div>
+                            <div className="flex items-center gap-2 font-serif font-bold">
+                              <BedDouble className="w-4 h-4 text-sage-700" /> {u.name}
+                            </div>
                             <StatusBadge status={u.status} />
                           </div>
-                          <div className="mt-1 text-xs text-neutral-500">
+                          <div className="mt-1.5 text-xs text-ink-soft">
                             {u.unit_type} · {u.rental_mode === "vacation" ? "Vacacional" : "Largo plazo"}
                           </div>
-                          <div className="mt-3 text-sm mono">
+                          <div className="mt-4 text-sm mono">
                             {u.rental_mode === "vacation" ? (
-                              <div className="space-y-0.5">
-                                <div>Día: <b>{eur(u.daily_rate)}</b></div>
-                                <div>Semana: <b>{eur(u.weekly_rate)}</b></div>
-                                <div>Mes: <b>{eur(u.monthly_rate)}</b></div>
+                              <div className="space-y-1 text-ink-soft">
+                                <div className="flex justify-between"><span>Día</span><b className="text-ink">{eur(u.daily_rate)}</b></div>
+                                <div className="flex justify-between"><span>Semana</span><b className="text-ink">{eur(u.weekly_rate)}</b></div>
+                                <div className="flex justify-between"><span>Mes</span><b className="text-ink">{eur(u.monthly_rate)}</b></div>
                               </div>
                             ) : (
-                              <div>Renta: <b>{eur(u.rent_amount)}</b>/mes</div>
+                              <div className="flex justify-between text-ink-soft">
+                                <span>Renta mensual</span>
+                                <b className="text-ink number-pill">{eur(u.rent_amount)}</b>
+                              </div>
                             )}
                           </div>
-                          <div className="mt-3 flex gap-1 justify-end">
+                          <div className="mt-4 flex gap-1 justify-end">
                             <Button size="icon" variant="ghost" onClick={() => { setEditUnit(u); setUnitProp(p); setUnitOpen(true); }}>
                               <Pencil className="w-4 h-4" />
                             </Button>
                             <Button size="icon" variant="ghost" onClick={() => delUnit(u)}>
-                              <Trash2 className="w-4 h-4 text-red-600" />
+                              <Trash2 className="w-4 h-4 text-terracotta" />
                             </Button>
                           </div>
                         </div>
@@ -301,11 +319,11 @@ export default function Properties() {
             </div>
           );
         })}
-      </Card>
+      </div>
 
       <Dialog open={unitOpen} onOpenChange={(v) => { setUnitOpen(v); if (!v) setEditUnit(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editUnit ? "Editar" : "Nueva"} Unidad · {unitProp?.name}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editUnit ? "Editar" : "Nueva"} unidad · {unitProp?.name}</DialogTitle></DialogHeader>
           {unitProp && <UnitForm initial={editUnit} propertyId={unitProp.id} onSaved={load} onClose={() => { setUnitOpen(false); setEditUnit(null); }} />}
         </DialogContent>
       </Dialog>

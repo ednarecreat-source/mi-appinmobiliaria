@@ -10,7 +10,7 @@ import urllib.request
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://property-manager-pro-19.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://8b87c856-3c79-472d-b0ff-74652705bfce.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 
@@ -342,3 +342,147 @@ def test_invoices_full_flow(s):
         s.delete(f"{API}/tenants/{t1['id']}")
         s.delete(f"{API}/tenants/{t2['id']}")
         s.delete(f"{API}/properties/{pid}")
+
+
+
+# ---------- PDF INVOICE (AI) ----------
+def _build_invoice_pdf_bytes() -> bytes:
+    """Build a real PDF with invoice-like content using reportlab."""
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+    # Border
+    c.rect(30, 30, width - 60, height - 60)
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(60, height - 80, "FACTURA")
+    c.setFont("Helvetica", 12)
+    y = height - 130
+    lines = [
+        "Emisor: Suministros Iberica S.L.",
+        "CIF: B12345678",
+        "Direccion: Calle Mayor 1, Madrid",
+        "Fecha: 2026-01-15",
+        "Numero de factura: 2026/00123",
+        "",
+        "Concepto: Reparacion fontaneria piso 3A",
+        "----------------------------------------",
+        "Base imponible: 200,00 EUR",
+        "IVA 21%: 42,00 EUR",
+        "Retencion 15%: 30,00 EUR",
+    ]
+    for line in lines:
+        c.drawString(60, y, line)
+        y -= 22
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(60, y - 20, "TOTAL: 212,00 EUR")
+    # Add some shapes/textures to ensure visual features
+    c.line(60, y - 50, width - 60, y - 50)
+    c.rect(60, y - 120, 200, 50)
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def test_invoice_analyze_pdf(s):
+    """POST /api/invoices/analyze with a real PDF file using application/pdf content type."""
+    p = s.post(f"{API}/properties", json={"name": "TEST_PropPDF", "address": "PDF", "category": "residential"}).json()
+    pid = p["id"]
+    t1 = s.post(f"{API}/tenants", json={"name": "TEST_PDF_T1", "property_id": pid, "split_percentage": 50}).json()
+    t2 = s.post(f"{API}/tenants", json={"name": "TEST_PDF_T2", "property_id": pid, "split_percentage": 50}).json()
+    invoice_id = None
+    try:
+        pdf_bytes = _build_invoice_pdf_bytes()
+        assert pdf_bytes[:5] == b"%PDF-", "Generated PDF magic bytes invalid"
+        files = {"file": ("invoice.pdf", pdf_bytes, "application/pdf")}
+        data = {"property_id": pid}
+        r = s.post(f"{API}/invoices/analyze", files=files, data=data, timeout=120)
+        assert r.status_code == 200, f"PDF analyze failed: {r.status_code} {r.text[:500]}"
+        j = r.json()
+        assert "_id" not in j
+        for k in ["id", "vendor", "invoice_date", "gross_amount", "iva", "iva_rate",
+                  "retenciones", "retenciones_rate", "net_amount", "splits"]:
+            assert k in j, f"missing key {k}"
+        assert len(j["splits"]) == 2
+        invoice_id = j["id"]
+        # Verify persisted via GET
+        one = s.get(f"{API}/invoices/{invoice_id}")
+        assert one.status_code == 200
+    finally:
+        if invoice_id:
+            s.delete(f"{API}/invoices/{invoice_id}")
+        s.delete(f"{API}/tenants/{t1['id']}")
+        s.delete(f"{API}/tenants/{t2['id']}")
+        s.delete(f"{API}/properties/{pid}")
+
+
+def test_invoice_analyze_pdf_magic_bytes_only(s):
+    """Send PDF bytes but with generic content-type and non-pdf filename. Server should still detect via %PDF- magic bytes."""
+    p = s.post(f"{API}/properties", json={"name": "TEST_PropPDFm", "address": "PDFm", "category": "residential"}).json()
+    pid = p["id"]
+    invoice_id = None
+    try:
+        pdf_bytes = _build_invoice_pdf_bytes()
+        # Wrong content-type & wrong extension - rely on magic bytes detection
+        files = {"file": ("upload.bin", pdf_bytes, "application/octet-stream")}
+        data = {"property_id": pid}
+        r = s.post(f"{API}/invoices/analyze", files=files, data=data, timeout=120)
+        assert r.status_code == 200, f"PDF magic-bytes detect failed: {r.status_code} {r.text[:500]}"
+        j = r.json()
+        assert "_id" not in j
+        assert "id" in j and "net_amount" in j
+        invoice_id = j["id"]
+    finally:
+        if invoice_id:
+            s.delete(f"{API}/invoices/{invoice_id}")
+        s.delete(f"{API}/properties/{pid}")
+
+
+# ---------- TENANTS PERCENTAGE SUMMARY ----------
+def test_tenants_percentage_summary_basic(s):
+    """Multiple tenants under same property should sum; tenants with no property_id excluded."""
+    p1 = s.post(f"{API}/properties", json={"name": "TEST_PSum1", "address": "PS1"}).json()
+    p2 = s.post(f"{API}/properties", json={"name": "TEST_PSum2", "address": "PS2"}).json()
+    p1id, p2id = p1["id"], p2["id"]
+    created = []
+    try:
+        # p1: 60 + 40 = 100
+        created.append(s.post(f"{API}/tenants", json={"name": "TEST_PS_T1", "property_id": p1id, "split_percentage": 60}).json())
+        created.append(s.post(f"{API}/tenants", json={"name": "TEST_PS_T2", "property_id": p1id, "split_percentage": 40}).json())
+        # p2: 70
+        created.append(s.post(f"{API}/tenants", json={"name": "TEST_PS_T3", "property_id": p2id, "split_percentage": 70}).json())
+        # tenant with no property_id - should be excluded
+        created.append(s.post(f"{API}/tenants", json={"name": "TEST_PS_T4", "split_percentage": 99}).json())
+
+        r = s.get(f"{API}/tenants/percentage-summary")
+        assert r.status_code == 200, r.text
+        summary = r.json()
+        assert isinstance(summary, dict)
+        assert p1id in summary
+        assert p2id in summary
+        assert abs(summary[p1id] - 100.0) < 0.001, f"expected 100 got {summary[p1id]}"
+        assert abs(summary[p2id] - 70.0) < 0.001, f"expected 70 got {summary[p2id]}"
+        # Tenant with empty property_id must not appear under "" key
+        assert "" not in summary, "Empty-string property_id should be excluded"
+        # The 99% from no-property tenant must not be aggregated anywhere
+        for v in summary.values():
+            assert v != 99.0, "Tenant without property_id leaked into summary"
+    finally:
+        for t in created:
+            s.delete(f"{API}/tenants/{t['id']}")
+        s.delete(f"{API}/properties/{p1id}")
+        s.delete(f"{API}/properties/{p2id}")
+
+
+def test_tenants_percentage_summary_returns_dict(s):
+    """Endpoint should always return a dict (possibly empty) and include only known properties."""
+    r = s.get(f"{API}/tenants/percentage-summary")
+    assert r.status_code == 200, r.text
+    summary = r.json()
+    assert isinstance(summary, dict)
+    # All values must be numeric and non-negative
+    for k, v in summary.items():
+        assert isinstance(k, str) and k != ""
+        assert isinstance(v, (int, float))
+        assert v >= 0

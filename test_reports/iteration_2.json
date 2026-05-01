@@ -1,0 +1,33 @@
+{
+  "summary": "Backend-only testing focused on new features: PDF support for /api/invoices/analyze and the new /api/tenants/percentage-summary endpoint. Extended /app/backend/tests/backend_test.py with 4 new pytest tests (PDF with proper content-type, PDF detected via %PDF- magic bytes only, percentage-summary with multi-tenant aggregation + property_id exclusion, and shape/dict guarantees). All 11 tests pass (7 regression + 4 new). Verified _id never leaked, AI flow continues to work for both JPEG and PDF, PyMuPDF first-page rendering reaches GPT-4o vision successfully, and percentage-summary correctly excludes tenants without property_id.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/tenants/percentage-summary", "issue": "Route order is correct (declared before /tenants/{tenant_id}), but a future refactor could accidentally shadow it; consider an explicit comment or pin the order."},
+      {"endpoint": "POST /api/invoices/analyze (PDF)", "issue": "If PyMuPDF is unavailable the endpoint returns 500 (correct). However, when fitz raises an unexpected exception the server still does doc.close() implicitly via GC; minor but consider try/finally to ensure resource release on multi-page edge cases."},
+      {"endpoint": "POST /api/invoices/analyze", "issue": "Pre-existing: image_base64 is capped at 200000 chars before persist (silent truncation). Not a regression."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "/api/tenants/percentage-summary correctly excludes empty/missing property_id and aggregates per property. Returns plain dict (not Pydantic model) which is fine but consider typing the response (Dict[str, float]).",
+    "PDF detection logic in analyze_invoice is robust (content-type OR filename OR %PDF- magic bytes) - matches requirements.",
+    "fitz.Matrix(2,2) ~150dpi is reasonable for OCR via vision; multi-page PDFs are silently dropped after page 0 (acceptable for invoices, but document this).",
+    "Server still 533 lines single file - acceptable; revisit modularization if more endpoints land.",
+    "ImageContent + UserMessage flow is correct for emergentintegrations gpt-4o.",
+    "No regression risk: all existing CRUD/cascade/AI tests continue to pass."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "not tested"},
+  "test_credentials": "N/A (no auth)",
+  "seed_data_creation": "Tests create their own TEST_-prefixed properties/tenants/invoices and clean up in finally blocks. Pre-existing seed data untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 11 backend tests pass. New tests cover: (1) PDF upload with application/pdf content-type, (2) PDF upload with octet-stream content-type detected only via %PDF- magic bytes, (3) percentage-summary multi-property aggregation with no-property exclusion, (4) percentage-summary shape/dict guarantees. Reportlab installed (pip) for generating real test PDFs. PyMuPDF (fitz) is the PDF->image bridge. Re-run: pytest /app/backend/tests/backend_test.py -v",
+  "rca of the issue": "No issues to RCA - all features working as specified."
+}

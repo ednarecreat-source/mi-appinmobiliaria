@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, eur } from "@/lib/api";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -169,15 +168,16 @@ export default function Vacation() {
     .reduce((a, b) => a + Number(b.total_amount || 0), 0);
 
   return (
-    <div className="space-y-6 fade-in">
+    <div className="space-y-8 fade-in">
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Alquiler Vacacional</h1>
-          <p className="text-sm text-neutral-500 mt-1">Calendario de disponibilidad por unidad · tarifas por día/semana/mes.</p>
+          <div className="text-xs font-mono uppercase tracking-[0.25em] text-sage-600 mb-2">Vacacional</div>
+          <h1 className="text-4xl font-serif font-bold tracking-tight">Alquiler vacacional</h1>
+          <p className="text-sm text-ink-soft mt-2">Calendario de disponibilidad por unidad · tarifas por día, semana o mes.</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button className="bg-black hover:bg-neutral-800" data-testid="btn-new-reservation"><Plus className="w-4 h-4 mr-1" /> Nueva Reserva</Button>
+            <Button className="btn-primary h-11 px-5" data-testid="btn-new-reservation"><Plus className="w-4 h-4 mr-1" /> Nueva reserva</Button>
           </DialogTrigger>
           <DialogContent className="max-w-xl">
             <DialogHeader><DialogTitle>Nueva reserva</DialogTitle></DialogHeader>
@@ -186,51 +186,51 @@ export default function Vacation() {
         </Dialog>
       </div>
 
-      <Card className="p-4">
+      <div className="card-soft p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <Button size="icon" variant="outline" onClick={() => shift(-1)} data-testid="cal-prev"><ChevronLeft className="w-4 h-4" /></Button>
-            <div className="capitalize font-bold text-lg w-56 text-center">{monthLabel}</div>
-            <Button size="icon" variant="outline" onClick={() => shift(1)} data-testid="cal-next"><ChevronRight className="w-4 h-4" /></Button>
+            <Button size="icon" variant="outline" className="rounded-full" onClick={() => shift(-1)} data-testid="cal-prev"><ChevronLeft className="w-4 h-4" /></Button>
+            <div className="capitalize font-serif font-bold text-xl w-56 text-center">{monthLabel}</div>
+            <Button size="icon" variant="outline" className="rounded-full" onClick={() => shift(1)} data-testid="cal-next"><ChevronRight className="w-4 h-4" /></Button>
           </div>
-          <div className="text-sm mono">
-            Ingresos del mes: <b>{eur(totalMonth)}</b>
+          <div className="text-sm">
+            <span className="text-ink-soft">Ingresos del mes:</span> <b className="mono text-sage-700">{eur(totalMonth)}</b>
           </div>
         </div>
 
         {units.length === 0 ? (
-          <div className="text-sm text-neutral-500 p-6 text-center">
+          <div className="text-sm text-ink-soft p-8 text-center bg-sage-50/40 rounded-xl border border-dashed border-border">
             No hay unidades vacacionales. Crea una unidad con modalidad "Vacacional" en Inmuebles.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-xl border border-border">
             <div className="min-w-max">
               <div className="grid" style={{ gridTemplateColumns: `180px repeat(${days}, 32px)` }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-500 py-2 px-2 border-b border-border bg-neutral-50 sticky left-0 z-10">Unidad</div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-ink-muted py-2 px-3 border-b border-border bg-sage-50 sticky left-0 z-10">Unidad</div>
                 {dates.map((d) => (
-                  <div key={fmt(d)} className="text-[10px] font-mono text-neutral-500 text-center border-b border-border bg-neutral-50 py-2">
+                  <div key={fmt(d)} className="text-[10px] font-mono text-ink-muted text-center border-b border-border bg-sage-50 py-2">
                     {d.getDate()}
                   </div>
                 ))}
                 {units.flatMap((u) => [
-                  <div key={`u-${u.id}`} className="py-3 px-2 border-b border-border sticky left-0 bg-white z-10 text-sm">
-                    <div className="font-semibold truncate">{u.name}</div>
-                    <div className="text-[11px] text-neutral-500">{u.unit_type}</div>
+                  <div key={`u-${u.id}`} className="py-3 px-3 border-b border-border sticky left-0 bg-cream-card z-10 text-sm">
+                    <div className="font-serif font-bold truncate">{u.name}</div>
+                    <div className="text-[11px] text-ink-soft">{u.unit_type}</div>
                   </div>,
                   ...dates.map((d) => {
                     const r = cellStatus(u.id, d);
                     const cls = r
                       ? r.status === "confirmed"
-                        ? "bg-emerald-500"
+                        ? "bg-sage-500"
                         : r.status === "pending"
-                          ? "bg-amber-400"
-                          : "bg-neutral-300"
-                      : "bg-white hover:bg-blue-50";
+                          ? "bg-terracotta"
+                          : "bg-cream-200"
+                      : "bg-cream-card hover:bg-sage-50";
                     return (
                       <div
                         key={`${u.id}-${fmt(d)}`}
                         title={r ? `${r.guest_name} · ${r.check_in} → ${r.check_out}` : fmt(d)}
-                        className={`h-10 border-b border-r border-border ${cls} cursor-pointer`}
+                        className={`h-10 border-b border-r border-border ${cls} cursor-pointer transition-colors`}
                       />
                     );
                   }),
@@ -239,16 +239,16 @@ export default function Vacation() {
             </div>
           </div>
         )}
-        <div className="flex items-center gap-4 mt-4 text-xs text-neutral-600">
-          <div className="flex items-center gap-1"><span className="w-3 h-3 bg-emerald-500 rounded-sm" /> Confirmada</div>
-          <div className="flex items-center gap-1"><span className="w-3 h-3 bg-amber-400 rounded-sm" /> Pendiente</div>
-          <div className="flex items-center gap-1"><span className="w-3 h-3 bg-neutral-300 rounded-sm" /> Cancelada</div>
-          <div className="flex items-center gap-1"><span className="w-3 h-3 bg-white border border-border rounded-sm" /> Disponible</div>
+        <div className="flex items-center gap-4 mt-4 text-xs text-ink-soft">
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-sage-500 rounded-sm" /> Confirmada</div>
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-terracotta rounded-sm" /> Pendiente</div>
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-cream-200 rounded-sm" /> Cancelada</div>
+          <div className="flex items-center gap-1.5"><span className="w-3 h-3 bg-cream-card border border-border rounded-sm" /> Disponible</div>
         </div>
-      </Card>
+      </div>
 
-      <Card className="overflow-hidden border border-border/60">
-        <div className="grid grid-cols-[1fr_1fr_140px_140px_100px_110px_90px] text-[11px] font-mono uppercase tracking-[0.2em] text-neutral-500 bg-neutral-50 border-b border-border px-4 py-3">
+      <div className="card-soft overflow-hidden">
+        <div className="grid grid-cols-[1fr_1fr_140px_140px_100px_110px_90px] text-[11px] font-mono uppercase tracking-[0.2em] text-ink-muted bg-sage-50 border-b border-border px-5 py-3.5">
           <div>Huésped</div>
           <div>Unidad</div>
           <div>Check-in</div>
@@ -257,22 +257,22 @@ export default function Vacation() {
           <div className="text-right">Total</div>
           <div className="text-right">Acciones</div>
         </div>
-        {reservations.length === 0 && <div className="p-8 text-center text-sm text-neutral-500">Sin reservas.</div>}
+        {reservations.length === 0 && <div className="p-10 text-center text-sm text-ink-soft">Sin reservas.</div>}
         {reservations.map((r) => (
-          <div key={r.id} className="grid grid-cols-[1fr_1fr_140px_140px_100px_110px_90px] items-center px-4 py-3 border-b border-border last:border-0 hover:bg-neutral-50">
+          <div key={r.id} className="grid grid-cols-[1fr_1fr_140px_140px_100px_110px_90px] items-center px-5 py-4 border-b border-border last:border-0 hover:bg-sage-50/60 transition-colors">
             <div>
-              <div className="font-semibold">{r.guest_name}</div>
-              <div className="text-xs text-neutral-500">{r.guest_contact}</div>
+              <div className="font-serif font-bold">{r.guest_name}</div>
+              <div className="text-xs text-ink-soft">{r.guest_contact}</div>
             </div>
             <div className="text-sm">{units.find((u) => u.id === r.unit_id)?.name || "—"}</div>
             <div className="text-sm mono">{r.check_in}</div>
             <div className="text-sm mono">{r.check_out}</div>
             <div className="text-right mono">{r.nights}</div>
             <div className="text-right mono font-bold">{eur(r.total_amount)}</div>
-            <div className="flex justify-end"><Button size="icon" variant="ghost" onClick={() => del(r)}><Trash2 className="w-4 h-4 text-red-600" /></Button></div>
+            <div className="flex justify-end"><Button size="icon" variant="ghost" onClick={() => del(r)}><Trash2 className="w-4 h-4 text-terracotta" /></Button></div>
           </div>
         ))}
-      </Card>
+      </div>
     </div>
   );
 }

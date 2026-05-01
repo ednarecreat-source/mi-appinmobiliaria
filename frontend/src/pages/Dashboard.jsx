@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { api, eur } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Building2, Home, TrendingUp, Users, Upload, Sparkles, FileText, FileType2 } from "lucide-react";
+import { Building2, Home, TrendingUp, Users, Upload, Sparkles, FileText, FileType2, ArrowUpRight, ArrowDownRight, Wallet, CalendarRange } from "lucide-react";
 import { toast } from "sonner";
 
 function Kpi({ label, value, icon: Icon, testid, hint, accent }) {
@@ -86,8 +86,81 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-5" data-testid="dashboard-kpis">
         <Kpi label="Inmuebles" value={stats?.total_properties ?? "—"} icon={Building2} testid="kpi-properties" />
         <Kpi label="Unidades" value={stats?.total_units ?? "—"} icon={Home} testid="kpi-units" hint={`${stats?.occupancy_rate ?? 0}% ocupación`} />
-        <Kpi label="Ingresos Mes" value={eur(stats?.monthly_income)} icon={TrendingUp} testid="kpi-income" hint={`Neto: ${eur(stats?.net_income)}`} accent="bg-sage-100 text-sage-700" />
+        <Kpi label="Ingresos Mes" value={eur(stats?.total_income)} icon={TrendingUp} testid="kpi-income" hint={`Neto limpio: ${eur(stats?.net_income)}`} accent="bg-sage-100 text-sage-700" />
         <Kpi label="Inquilinos" value={stats?.total_tenants ?? "—"} icon={Users} testid="kpi-tenants" hint={`Gastos: ${eur(stats?.monthly_expenses)}`} />
+      </div>
+
+      {/* Financial summary */}
+      <div className="card-soft p-7" data-testid="financial-summary">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-sage-100 text-sage-700 grid place-items-center">
+            <Wallet className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="font-serif font-bold text-xl">Resumen financiero del mes</h2>
+            <div className="text-xs text-ink-soft">Ingresos, gastos, impuestos y neto limpio en un vistazo</div>
+          </div>
+          <div className={`ml-auto px-3 py-1.5 rounded-full text-xs font-mono font-semibold ${
+            (stats?.net_income ?? 0) >= 0 ? "bg-sage-100 text-sage-700" : "bg-terracotta-soft text-terracotta"
+          }`}>
+            Neto limpio · {eur(stats?.net_income)}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-0 divide-x divide-border border border-border rounded-xl overflow-hidden bg-sage-50/30">
+          {/* Ingresos */}
+          <div className="p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <ArrowUpRight className="w-4 h-4 text-sage-700" />
+              <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-sage-700">Ingresos</div>
+            </div>
+            <div className="text-2xl font-serif font-bold mono">{eur(stats?.total_income)}</div>
+            <div className="mt-3 space-y-1 text-xs">
+              <div className="flex justify-between text-ink-soft"><span>· Renta mensual</span><span className="mono">{eur(stats?.monthly_income)}</span></div>
+              <div className="flex justify-between text-ink-soft"><span>· Vacacional</span><span className="mono">{eur(stats?.vacation_income)}</span></div>
+            </div>
+          </div>
+
+          {/* Gastos */}
+          <div className="p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <ArrowDownRight className="w-4 h-4 text-terracotta" />
+              <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-terracotta">Gastos totales</div>
+            </div>
+            <div className="text-2xl font-serif font-bold mono">{eur(stats?.monthly_expenses)}</div>
+            <div className="mt-3 space-y-1 text-xs">
+              <div className="flex justify-between text-ink-soft"><span>· Facturas</span><span className="mono">{eur(stats?.invoice_net)}</span></div>
+              <div className="flex justify-between text-ink-soft"><span>· Gastos fijos</span><span className="mono">{eur(stats?.fixed_expenses_monthly)}</span></div>
+            </div>
+          </div>
+
+          {/* Impuestos */}
+          <div className="p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText className="w-4 h-4 text-ink-soft" />
+              <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-ink-soft">IVA & Retenciones</div>
+            </div>
+            <div className="text-2xl font-serif font-bold mono">{eur((stats?.invoice_iva ?? 0) + (stats?.invoice_retenciones ?? 0))}</div>
+            <div className="mt-3 space-y-1 text-xs">
+              <div className="flex justify-between text-ink-soft"><span>· IVA facturas</span><span className="mono text-sage-700">+{eur(stats?.invoice_iva)}</span></div>
+              <div className="flex justify-between text-ink-soft"><span>· Retenciones</span><span className="mono text-terracotta">-{eur(stats?.invoice_retenciones)}</span></div>
+            </div>
+          </div>
+
+          {/* Neto */}
+          <div className="p-5 bg-sage-50/60">
+            <div className="flex items-center gap-2 mb-2">
+              <CalendarRange className="w-4 h-4 text-sage-700" />
+              <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-sage-700">Lo que se gana limpio</div>
+            </div>
+            <div className={`text-2xl font-serif font-bold mono ${(stats?.net_income ?? 0) >= 0 ? "text-sage-700" : "text-terracotta"}`}>
+              {eur(stats?.net_income)}
+            </div>
+            <div className="mt-3 space-y-1 text-xs text-ink-soft">
+              <div>Tras restar todas las facturas y gastos fijos del inmueble</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="leaf-divider" />

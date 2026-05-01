@@ -166,6 +166,27 @@ class ReservationIn(BaseModel):
     notes: Optional[str] = ""
 
 
+class FixedExpense(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    property_id: str
+    name: str
+    category: str = "other"  # mortgage|insurance|maintenance|utilities|community|tax|other
+    amount: float = 0.0
+    frequency: str = "monthly"  # monthly|quarterly|yearly
+    notes: Optional[str] = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
+class FixedExpenseIn(BaseModel):
+    property_id: str
+    name: str
+    category: str = "other"
+    amount: float = 0.0
+    frequency: str = "monthly"
+    notes: Optional[str] = ""
+
+
 # ============ PROPERTIES ============
 @api_router.get("/properties", response_model=List[Property])
 async def list_properties():
@@ -474,6 +495,47 @@ async def delete_reservation(rid: str):
     return {"ok": True}
 
 
+# ============ FIXED EXPENSES ============
+@api_router.get("/fixed-expenses", response_model=List[FixedExpense])
+async def list_fixed_expenses(property_id: Optional[str] = None):
+    q = {"property_id": property_id} if property_id else {}
+    rows = await db.fixed_expenses.find(q, {"_id": 0}).to_list(1000)
+    return rows
+
+
+@api_router.post("/fixed-expenses", response_model=FixedExpense)
+async def create_fixed_expense(payload: FixedExpenseIn):
+    obj = FixedExpense(**payload.model_dump())
+    await db.fixed_expenses.insert_one(obj.model_dump())
+    return obj
+
+
+@api_router.put("/fixed-expenses/{fid}", response_model=FixedExpense)
+async def update_fixed_expense(fid: str, payload: FixedExpenseIn):
+    existing = await db.fixed_expenses.find_one({"id": fid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Gasto fijo no encontrado")
+    await db.fixed_expenses.update_one({"id": fid}, {"$set": payload.model_dump()})
+    existing.update(payload.model_dump())
+    return FixedExpense(**existing)
+
+
+@api_router.delete("/fixed-expenses/{fid}")
+async def delete_fixed_expense(fid: str):
+    await db.fixed_expenses.delete_one({"id": fid})
+    return {"ok": True}
+
+
+def _monthly(amount: float, frequency: str) -> float:
+    if frequency == "monthly":
+        return amount
+    if frequency == "quarterly":
+        return amount / 3.0
+    if frequency == "yearly":
+        return amount / 12.0
+    return amount
+
+
 # ============ DASHBOARD ============
 @api_router.get("/dashboard/stats")
 async def dashboard_stats():
@@ -482,20 +544,37 @@ async def dashboard_stats():
     occupied = await db.units.count_documents({"status": {"$in": ["occupied", "vacation"]}})
     tenants = await db.tenants.count_documents({})
 
-    # Monthly income = sum of monthly_rent of tenants
     total_monthly = 0.0
     async for t in db.tenants.find({}, {"_id": 0, "monthly_rent": 1}):
         total_monthly += float(t.get("monthly_rent", 0))
 
-    # Net expenses this month from invoices
     now = datetime.now(timezone.utc)
     ym = now.strftime("%Y-%m")
-    total_expenses = 0.0
-    async for inv in db.invoices.find({}, {"_id": 0, "invoice_date": 1, "net_amount": 1}):
+
+    invoice_gross = 0.0
+    invoice_iva = 0.0
+    invoice_retenciones = 0.0
+    invoice_net = 0.0
+    async for inv in db.invoices.find({}, {"_id": 0, "invoice_date": 1, "gross_amount": 1, "iva": 1, "retenciones": 1, "net_amount": 1}):
         d = str(inv.get("invoice_date", ""))
         if d.startswith(ym):
-            total_expenses += float(inv.get("net_amount", 0))
+            invoice_gross += float(inv.get("gross_amount", 0))
+            invoice_iva += float(inv.get("iva", 0))
+            invoice_retenciones += float(inv.get("retenciones", 0))
+            invoice_net += float(inv.get("net_amount", 0))
 
+    fixed_monthly = 0.0
+    async for fe in db.fixed_expenses.find({}, {"_id": 0, "amount": 1, "frequency": 1}):
+        fixed_monthly += _monthly(float(fe.get("amount", 0)), str(fe.get("frequency", "monthly")))
+
+    vacation_income = 0.0
+    async for r in db.reservations.find({"status": {"$ne": "cancelled"}}, {"_id": 0, "check_in": 1, "total_amount": 1}):
+        if str(r.get("check_in", "")).startswith(ym):
+            vacation_income += float(r.get("total_amount", 0))
+
+    total_expenses = invoice_net + fixed_monthly
+    total_income = total_monthly + vacation_income
+    net_clean = total_income - total_expenses
     occupancy = round((occupied / units) * 100, 1) if units else 0.0
 
     return {
@@ -503,8 +582,15 @@ async def dashboard_stats():
         "total_units": units,
         "total_tenants": tenants,
         "monthly_income": round(total_monthly, 2),
+        "vacation_income": round(vacation_income, 2),
+        "total_income": round(total_income, 2),
+        "invoice_gross": round(invoice_gross, 2),
+        "invoice_iva": round(invoice_iva, 2),
+        "invoice_retenciones": round(invoice_retenciones, 2),
+        "invoice_net": round(invoice_net, 2),
+        "fixed_expenses_monthly": round(fixed_monthly, 2),
         "monthly_expenses": round(total_expenses, 2),
-        "net_income": round(total_monthly - total_expenses, 2),
+        "net_income": round(net_clean, 2),
         "occupancy_rate": occupancy,
     }
 

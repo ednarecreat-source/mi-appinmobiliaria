@@ -1,0 +1,38 @@
+{
+  "summary": "Backend-only testing for iter 3: FixedExpense CRUD (/api/fixed-expenses) + enhanced /api/dashboard/stats fields and frequency normalization. Added 3 new pytest tests to /app/backend/tests/backend_test.py. All 14 tests pass (11 regression + 3 new). Verified: POST/GET (with and without property_id filter)/PUT/DELETE work; _id never leaked; 404 on update of non-existent id; dashboard returns all new fields (total_income, vacation_income, invoice_gross, invoice_iva, invoice_retenciones, invoice_net, fixed_expenses_monthly, monthly_expenses, net_income); invariants hold: monthly_expenses == invoice_net + fixed_expenses_monthly (\u22640.01\u20ac), total_income == monthly_income + vacation_income, net_income == total_income - monthly_expenses; frequency normalization confirmed (monthly=amount, quarterly=amount/3, yearly=amount/12) by measuring deltas from dashboard baseline.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/fixed-expenses", "issue": "No server-side validation of category/frequency enums \u2014 any string is accepted. Consider validating against {mortgage|insurance|maintenance|utilities|community|tax|other} and {monthly|quarterly|yearly} to prevent bad data that would fall through to _monthly()'s default (returns amount as-is for unknown frequency)."},
+      {"endpoint": "POST /api/fixed-expenses", "issue": "property_id is required but not validated to exist in /api/properties. Orphan fixed expenses would still count in dashboard fixed_expenses_monthly after the referenced property is deleted."},
+      {"endpoint": "DELETE /api/properties/{id}", "issue": "Cascade deletes units (preserved from iter 2) but does NOT cascade-delete tenants, reservations, invoices, or fixed_expenses belonging to the property. Pre-existing but now more impactful since fixed_expenses feed dashboard math."},
+      {"endpoint": "GET /api/dashboard/stats", "issue": "invoice_* and vacation_income are filtered by current YYYY-MM via string prefix of invoice_date/check_in. If the stored value is an empty string or non-ISO (from LLM extraction), it is silently excluded \u2014 acceptable but worth documenting."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Add Pydantic validators / Literal types for FixedExpense.category and FixedExpense.frequency.",
+    "(Optional) Extend cascade on DELETE /api/properties to also clear tenants, reservations, invoices, fixed_expenses.",
+    "(Optional) Validate that FixedExpenseIn.property_id refers to an existing property."
+  ],
+  "critical_code_review_comments": [
+    "_monthly() helper is clean and returns amount for unknown frequency (safe fallback), but pairing with enum validation would be more defensive.",
+    "dashboard_stats correctly normalizes per frequency and rounds all monetary outputs to 2 decimals; invariants verified numerically.",
+    "FixedExpense CRUD follows same pattern as other resources (projection excludes _id, PUT returns 404 on missing id, DELETE is idempotent).",
+    "server.py is now 620 lines \u2014 still acceptable; consider splitting by resource (routers/properties.py, routers/fixed_expenses.py, services/dashboard.py) before further endpoints land.",
+    "No Pydantic response_model on GET /api/dashboard/stats \u2014 consider adding a DashboardStats model for schema stability as frontend consumes more fields.",
+    "No regression: all iter 1 & iter 2 tests continue to pass."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "not tested"},
+  "test_credentials": "N/A (no auth)",
+  "seed_data_creation": "Tests create TEST_-prefixed properties/fixed_expenses and clean up in finally blocks. Baseline is captured from live dashboard before mutating, then deltas are validated against the captured baseline so pre-existing seed (Hipoteca/Seguro/Comunidad/IBI on Edificio Central) is not disturbed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 14 backend tests pass. New tests: (1) test_fixed_expenses_crud \u2014 CRUD with monthly/quarterly/yearly + 404 on update; (2) test_dashboard_stats_new_fields \u2014 presence & invariants; (3) test_dashboard_fixed_expenses_frequency_normalization \u2014 delta-based verification of amount/1, /3, /12 normalization and net_income drop. Re-run: pytest /app/backend/tests/backend_test.py -v.",
+  "rca of the issue": "No issues to RCA \u2014 all specified features work as described."
+}

@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Building2, ChevronDown, ChevronRight, Home, Pencil, Trash2, BedDouble } from "lucide-react";
+import { Plus, Building2, ChevronDown, ChevronRight, Home, Pencil, Trash2, BedDouble, Banknote, Shield, Wrench, Zap, Landmark, Receipt } from "lucide-react";
 import { toast } from "sonner";
 
 const UNIT_TYPES = ["Local", "Estudio", "Duplex", "Dormitorio"];
@@ -15,6 +15,17 @@ const CATEGORIES = [
   { v: "commercial", l: "Comercial" },
   { v: "vacation", l: "Vacacional" },
 ];
+
+const EXPENSE_CATEGORIES = [
+  { v: "mortgage", l: "Hipoteca", icon: Landmark },
+  { v: "insurance", l: "Seguro", icon: Shield },
+  { v: "maintenance", l: "Mantenimiento", icon: Wrench },
+  { v: "utilities", l: "Suministros", icon: Zap },
+  { v: "community", l: "Comunidad", icon: Home },
+  { v: "tax", l: "Impuestos (IBI)", icon: Receipt },
+  { v: "other", l: "Otros", icon: Banknote },
+];
+const FREQ_LABEL = { monthly: "/mes", quarterly: "/trim", yearly: "/año" };
 
 function PropertyForm({ initial, onSaved, onClose }) {
   const [f, setF] = useState(
@@ -139,6 +150,57 @@ function UnitForm({ initial, propertyId, onSaved, onClose }) {
   );
 }
 
+function ExpenseForm({ initial, propertyId, onSaved, onClose }) {
+  const [f, setF] = useState(
+    initial || { property_id: propertyId, name: "", category: "mortgage", amount: 0, frequency: "monthly", notes: "" }
+  );
+  const save = async () => {
+    if (!f.name || !f.amount) return toast.error("Nombre e importe requeridos");
+    try {
+      const payload = { ...f, property_id: propertyId };
+      if (initial?.id) await api.put(`/fixed-expenses/${initial.id}`, payload);
+      else await api.post("/fixed-expenses", payload);
+      toast.success("Gasto fijo guardado");
+      onSaved(); onClose();
+    } catch { toast.error("Error al guardar"); }
+  };
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div><Label>Nombre</Label><Input data-testid="exp-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ej. Hipoteca BBVA" /></div>
+        <div>
+          <Label>Categoría</Label>
+          <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v })}>
+            <SelectTrigger data-testid="exp-category"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {EXPENSE_CATEGORIES.map((c) => <SelectItem key={c.v} value={c.v}>{c.l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Label>Importe (€)</Label><Input data-testid="exp-amount" type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: parseFloat(e.target.value || 0) })} /></div>
+        <div>
+          <Label>Frecuencia</Label>
+          <Select value={f.frequency} onValueChange={(v) => setF({ ...f, frequency: v })}>
+            <SelectTrigger data-testid="exp-frequency"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="monthly">Mensual</SelectItem>
+              <SelectItem value="quarterly">Trimestral</SelectItem>
+              <SelectItem value="yearly">Anual</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div><Label>Notas</Label><Textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Cancelar</Button>
+        <Button onClick={save} className="btn-primary" data-testid="save-expense">Guardar</Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
 function StatusBadge({ status }) {
   const map = {
     vacant: { l: "Libre", c: "bg-cream-100 text-ink-soft border-border" },
@@ -166,6 +228,7 @@ const CATEGORY_LABELS = { residential: "Residencial", commercial: "Comercial", v
 export default function Properties() {
   const [properties, setProperties] = useState([]);
   const [units, setUnits] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [pctSummary, setPctSummary] = useState({});
   const [expanded, setExpanded] = useState({});
   const [propOpen, setPropOpen] = useState(false);
@@ -173,16 +236,24 @@ export default function Properties() {
   const [unitOpen, setUnitOpen] = useState(false);
   const [unitProp, setUnitProp] = useState(null);
   const [editUnit, setEditUnit] = useState(null);
+  const [expOpen, setExpOpen] = useState(false);
+  const [expProp, setExpProp] = useState(null);
+  const [editExp, setEditExp] = useState(null);
 
   const load = async () => {
-    const [p, u, s] = await Promise.all([api.get("/properties"), api.get("/units"), api.get("/tenants/percentage-summary")]);
+    const [p, u, s, e] = await Promise.all([
+      api.get("/properties"), api.get("/units"), api.get("/tenants/percentage-summary"), api.get("/fixed-expenses"),
+    ]);
     setProperties(p.data);
     setUnits(u.data);
     setPctSummary(s.data || {});
+    setExpenses(e.data);
   };
   useEffect(() => { load(); }, []);
 
   const unitsOf = (pid) => units.filter((u) => u.property_id === pid);
+  const expensesOf = (pid) => expenses.filter((e) => e.property_id === pid);
+  const monthly = (e) => e.frequency === "monthly" ? e.amount : e.frequency === "quarterly" ? e.amount / 3 : e.amount / 12;
 
   const delProp = async (p) => {
     if (!window.confirm(`¿Eliminar ${p.name} y todas sus unidades?`)) return;
@@ -194,6 +265,12 @@ export default function Properties() {
     if (!window.confirm(`¿Eliminar ${u.name}?`)) return;
     await api.delete(`/units/${u.id}`);
     toast.success("Unidad eliminada");
+    load();
+  };
+  const delExp = async (e) => {
+    if (!window.confirm(`¿Eliminar "${e.name}"?`)) return;
+    await api.delete(`/fixed-expenses/${e.id}`);
+    toast.success("Gasto eliminado");
     load();
   };
 
@@ -314,6 +391,55 @@ export default function Properties() {
                       ))}
                     </div>
                   )}
+
+                  {/* Fixed expenses section */}
+                  <div className="mt-6 pt-5 border-t border-border">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-sage-600">Gastos fijos del inmueble</div>
+                        <div className="text-xs text-ink-soft mt-0.5">Hipoteca, seguros, comunidad, IBI, mantenimiento...</div>
+                      </div>
+                      <Button size="sm" variant="outline" className="bg-white" onClick={() => { setExpProp(p); setEditExp(null); setExpOpen(true); }} data-testid={`add-expense-${p.id}`}>
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Añadir gasto
+                      </Button>
+                    </div>
+                    {expensesOf(p.id).length === 0 ? (
+                      <div className="text-xs text-ink-soft py-4 text-center italic">Sin gastos fijos registrados.</div>
+                    ) : (
+                      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {expensesOf(p.id).map((e) => {
+                          const cat = EXPENSE_CATEGORIES.find((c) => c.v === e.category) || EXPENSE_CATEGORIES[6];
+                          const Icon = cat.icon;
+                          return (
+                            <div key={e.id} className="card-soft p-4" data-testid={`expense-${e.id}`}>
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-9 h-9 rounded-lg bg-terracotta-soft grid place-items-center text-terracotta">
+                                    <Icon className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <div className="font-serif font-bold text-sm">{e.name}</div>
+                                    <div className="text-[11px] text-ink-soft">{cat.l}</div>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="mono font-bold text-sm">{eur(e.amount)}</div>
+                                  <div className="text-[10px] text-ink-soft mono">{FREQ_LABEL[e.frequency]}</div>
+                                </div>
+                              </div>
+                              <div className="mt-3 flex items-center justify-between text-xs text-ink-soft">
+                                <span>~ {eur(monthly(e))}/mes</span>
+                                <div className="flex gap-0.5">
+                                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditExp(e); setExpProp(p); setExpOpen(true); }}><Pencil className="w-3.5 h-3.5" /></Button>
+                                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => delExp(e)}><Trash2 className="w-3.5 h-3.5 text-terracotta" /></Button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -325,6 +451,13 @@ export default function Properties() {
         <DialogContent>
           <DialogHeader><DialogTitle>{editUnit ? "Editar" : "Nueva"} unidad · {unitProp?.name}</DialogTitle></DialogHeader>
           {unitProp && <UnitForm initial={editUnit} propertyId={unitProp.id} onSaved={load} onClose={() => { setUnitOpen(false); setEditUnit(null); }} />}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={expOpen} onOpenChange={(v) => { setExpOpen(v); if (!v) setEditExp(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{editExp ? "Editar" : "Nuevo"} gasto fijo · {expProp?.name}</DialogTitle></DialogHeader>
+          {expProp && <ExpenseForm initial={editExp} propertyId={expProp.id} onSaved={load} onClose={() => { setExpOpen(false); setEditExp(null); }} />}
         </DialogContent>
       </Dialog>
     </div>

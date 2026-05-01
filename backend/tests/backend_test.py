@@ -486,3 +486,172 @@ def test_tenants_percentage_summary_returns_dict(s):
         assert isinstance(k, str) and k != ""
         assert isinstance(v, (int, float))
         assert v >= 0
+
+
+
+# ---------- FIXED EXPENSES CRUD ----------
+def test_fixed_expenses_crud(s):
+    p = s.post(f"{API}/properties", json={"name": "TEST_PropFE", "address": "FE", "category": "residential"}).json()
+    pid = p["id"]
+    created_ids = []
+    try:
+        # CREATE monthly
+        r = s.post(f"{API}/fixed-expenses", json={
+            "property_id": pid, "name": "TEST_FE_Mortgage", "category": "mortgage",
+            "amount": 600.0, "frequency": "monthly", "notes": "test note"
+        })
+        assert r.status_code == 200, r.text
+        fe1 = r.json()
+        assert fe1["name"] == "TEST_FE_Mortgage"
+        assert fe1["category"] == "mortgage"
+        assert fe1["amount"] == 600.0
+        assert fe1["frequency"] == "monthly"
+        assert fe1["property_id"] == pid
+        assert "id" in fe1
+        assert "_id" not in fe1
+        created_ids.append(fe1["id"])
+
+        # CREATE quarterly
+        r = s.post(f"{API}/fixed-expenses", json={
+            "property_id": pid, "name": "TEST_FE_Insurance", "category": "insurance",
+            "amount": 300.0, "frequency": "quarterly"
+        })
+        assert r.status_code == 200
+        fe2 = r.json()
+        assert fe2["frequency"] == "quarterly"
+        assert "_id" not in fe2
+        created_ids.append(fe2["id"])
+
+        # CREATE yearly
+        r = s.post(f"{API}/fixed-expenses", json={
+            "property_id": pid, "name": "TEST_FE_IBI", "category": "tax",
+            "amount": 1200.0, "frequency": "yearly"
+        })
+        assert r.status_code == 200
+        fe3 = r.json()
+        assert fe3["frequency"] == "yearly"
+        created_ids.append(fe3["id"])
+
+        # LIST without filter
+        lst_all = s.get(f"{API}/fixed-expenses").json()
+        assert all("_id" not in x for x in lst_all)
+        ids_all = {x["id"] for x in lst_all}
+        for fid in created_ids:
+            assert fid in ids_all
+
+        # LIST with property_id filter
+        lst_filt = s.get(f"{API}/fixed-expenses", params={"property_id": pid}).json()
+        assert len(lst_filt) == 3
+        assert all(x["property_id"] == pid for x in lst_filt)
+
+        # UPDATE
+        r = s.put(f"{API}/fixed-expenses/{fe1['id']}", json={
+            "property_id": pid, "name": "TEST_FE_Mortgage_upd", "category": "mortgage",
+            "amount": 750.0, "frequency": "monthly", "notes": "updated"
+        })
+        assert r.status_code == 200
+        upd = r.json()
+        assert upd["name"] == "TEST_FE_Mortgage_upd"
+        assert upd["amount"] == 750.0
+        assert upd["notes"] == "updated"
+        # Verify persistence
+        lst_filt2 = s.get(f"{API}/fixed-expenses", params={"property_id": pid}).json()
+        assert any(x["id"] == fe1["id"] and x["amount"] == 750.0 for x in lst_filt2)
+
+        # DELETE
+        r = s.delete(f"{API}/fixed-expenses/{fe2['id']}")
+        assert r.status_code == 200
+        created_ids.remove(fe2["id"])
+        lst_filt3 = s.get(f"{API}/fixed-expenses", params={"property_id": pid}).json()
+        assert not any(x["id"] == fe2["id"] for x in lst_filt3)
+
+        # Update non-existent -> 404
+        r = s.put(f"{API}/fixed-expenses/non-existent-id", json={
+            "property_id": pid, "name": "x", "category": "other", "amount": 1, "frequency": "monthly"
+        })
+        assert r.status_code == 404
+    finally:
+        for fid in created_ids:
+            s.delete(f"{API}/fixed-expenses/{fid}")
+        s.delete(f"{API}/properties/{pid}")
+
+
+# ---------- DASHBOARD STATS ENHANCED ----------
+def test_dashboard_stats_new_fields(s):
+    r = s.get(f"{API}/dashboard/stats")
+    assert r.status_code == 200, r.text
+    j = r.json()
+    required = [
+        "total_properties", "total_units", "total_tenants",
+        "monthly_income", "vacation_income", "total_income",
+        "invoice_gross", "invoice_iva", "invoice_retenciones", "invoice_net",
+        "fixed_expenses_monthly", "monthly_expenses", "net_income", "occupancy_rate",
+    ]
+    for k in required:
+        assert k in j, f"missing dashboard field {k}"
+        assert isinstance(j[k], (int, float)), f"{k} must be numeric"
+
+    # monthly_expenses == invoice_net + fixed_expenses_monthly (within 0.01)
+    assert abs(j["monthly_expenses"] - (j["invoice_net"] + j["fixed_expenses_monthly"])) <= 0.01
+    # total_income == monthly_income + vacation_income (within 0.01)
+    assert abs(j["total_income"] - (j["monthly_income"] + j["vacation_income"])) <= 0.01
+    # net_income == total_income - monthly_expenses
+    assert abs(j["net_income"] - (j["total_income"] - j["monthly_expenses"])) <= 0.01
+
+
+def test_dashboard_fixed_expenses_frequency_normalization(s):
+    """Create fixed expenses with 3 frequencies and verify fixed_expenses_monthly math."""
+    p = s.post(f"{API}/properties", json={"name": "TEST_PropFreq", "address": "Freq", "category": "residential"}).json()
+    pid = p["id"]
+    created_ids = []
+    try:
+        # Baseline
+        base = s.get(f"{API}/dashboard/stats").json()
+        base_fixed = float(base["fixed_expenses_monthly"])
+        base_expenses = float(base["monthly_expenses"])
+        base_invoice_net = float(base["invoice_net"])
+        base_net = float(base["net_income"])
+        base_total_income = float(base["total_income"])
+
+        # Add: monthly 100, quarterly 300 -> 100/mo, yearly 1200 -> 100/mo
+        for payload in [
+            {"property_id": pid, "name": "TEST_Freq_M", "category": "other", "amount": 100.0, "frequency": "monthly"},
+            {"property_id": pid, "name": "TEST_Freq_Q", "category": "other", "amount": 300.0, "frequency": "quarterly"},
+            {"property_id": pid, "name": "TEST_Freq_Y", "category": "other", "amount": 1200.0, "frequency": "yearly"},
+        ]:
+            r = s.post(f"{API}/fixed-expenses", json=payload)
+            assert r.status_code == 200
+            created_ids.append(r.json()["id"])
+
+        # Expected monthly contribution: 100 + 100 + 100 = 300
+        after = s.get(f"{API}/dashboard/stats").json()
+        after_fixed = float(after["fixed_expenses_monthly"])
+        delta_fixed = after_fixed - base_fixed
+        assert abs(delta_fixed - 300.0) <= 0.01, f"expected +300 fixed_expenses_monthly, got delta {delta_fixed}"
+
+        # monthly_expenses should have increased by the same amount (invoice_net unchanged)
+        assert abs(float(after["invoice_net"]) - base_invoice_net) <= 0.01
+        delta_exp = float(after["monthly_expenses"]) - base_expenses
+        assert abs(delta_exp - 300.0) <= 0.01
+
+        # Invariant: monthly_expenses = invoice_net + fixed_expenses_monthly
+        assert abs(after["monthly_expenses"] - (after["invoice_net"] + after["fixed_expenses_monthly"])) <= 0.01
+
+        # net_income should drop by ~300 (income side unchanged)
+        assert abs(float(after["total_income"]) - base_total_income) <= 0.01
+        delta_net = float(after["net_income"]) - base_net
+        assert abs(delta_net - (-300.0)) <= 0.01
+
+        # Individual frequency normalization sanity via direct math
+        # quarterly 300/3=100, yearly 1200/12=100, monthly 100 -> all equal 100
+        # Validate by removing the yearly and checking delta falls by 100
+        yearly_id = created_ids[-1]
+        r = s.delete(f"{API}/fixed-expenses/{yearly_id}")
+        assert r.status_code == 200
+        created_ids.remove(yearly_id)
+        after2 = s.get(f"{API}/dashboard/stats").json()
+        assert abs(float(after2["fixed_expenses_monthly"]) - (after_fixed - 100.0)) <= 0.01
+    finally:
+        for fid in created_ids:
+            s.delete(f"{API}/fixed-expenses/{fid}")
+        s.delete(f"{API}/properties/{pid}")

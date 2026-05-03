@@ -3,6 +3,22 @@ import { api, setWorkspaceId, getWorkspaceId } from "@/lib/api";
 
 const Ctx = createContext(null);
 
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+function loadGoogleScript() {
+  return new Promise((resolve, reject) => {
+    if (window.google?.accounts?.id) return resolve();
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = resolve;
+    script.onerror = reject;
+    document.body.appendChild(script);
+  });
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [workspaces, setWorkspaces] = useState([]);
@@ -22,10 +38,6 @@ export function AuthProvider({ children }) {
   }, []);
 
   const checkAuth = useCallback(async () => {
-    if (window.location.hash?.includes("session_id=")) {
-      setLoading(false);
-      return;
-    }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
@@ -37,16 +49,43 @@ export function AuthProvider({ children }) {
     }
   }, [fetchWorkspaces]);
 
-  useEffect(() => { checkAuth(); }, [checkAuth]);
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
 
-  const login = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + "/dashboard";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  const login = async () => {
+    if (!GOOGLE_CLIENT_ID) {
+      alert("Falta VITE_GOOGLE_CLIENT_ID");
+      return;
+    }
+
+    await loadGoogleScript();
+
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: async (response) => {
+        try {
+          await api.post("/auth/google", {
+            credential: response.credential,
+          });
+          await checkAuth();
+          window.location.href = "/dashboard";
+        } catch (err) {
+          console.error(err);
+          alert("No se pudo iniciar sesión con Google");
+        }
+      },
+    });
+
+    window.google.accounts.id.prompt();
   };
 
   const logout = async () => {
-    try { await api.post("/auth/logout"); } catch (e) { /* ignore */ }
+    try {
+      await api.post("/auth/logout");
+    } catch (e) {
+      // ignore
+    }
     setUser(null);
     setWorkspaceId(null);
     window.location.href = "/";
@@ -58,7 +97,19 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <Ctx.Provider value={{ user, setUser, workspaces, activeWs, switchWorkspace, fetchWorkspaces, loading, login, logout }}>
+    <Ctx.Provider
+      value={{
+        user,
+        setUser,
+        workspaces,
+        activeWs,
+        switchWorkspace,
+        fetchWorkspaces,
+        loading,
+        login,
+        logout,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

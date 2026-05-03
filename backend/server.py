@@ -33,6 +33,7 @@ db = client[os.environ['DB_NAME']]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 EMERGENT_AUTH_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 
 app = FastAPI(title="RCT Gestión Inmobiliaria")
 api_router = APIRouter(prefix="/api")
@@ -80,6 +81,9 @@ class WorkspaceIn(BaseModel):
     name: str
     display_currency: str = "EUR"
     exchange_rates: Dict[str, float] = {}
+
+class GoogleLoginPayload(BaseModel):
+    credential: str
 
 
 # ============ DOMAIN MODELS ============
@@ -353,6 +357,87 @@ async def get_workspace(
 
 
 # ============ AUTH ENDPOINTS ============
+@api_router.post("/auth/google")
+async def auth_google(payload: GoogleLoginPayload, response: Response):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(500, "Falta GOOGLE_CLIENT_ID")
+
+    async with httpx.AsyncClient(timeout=15.0) as cli:
+        r = await cli.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={"id_token": payload.credential},
+        )
+
+    if r.status_code != 200:
+        raise HTTPException(401, "Google rechazó el token")
+
+    data = r.json()
+
+    if data.get("aud") != GOOGLE_CLIENT_ID:
+        raise HTTPException(401, "Google Client ID no coincide")
+
+    email = data.get("email")
+    if not email:
+        raise HTTPException(400, "Email no recibido")
+
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+
+    if existing:
+        user_id = existing["user_id"]
+        await db.users.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "name": data.get("name", existing.get("name", "")),
+                    "picture": data.get("picture", existing.get("picture", "")),
+                }
+            },
+        )
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({
+            "user_id": user_id,
+            "email": email,
+            "name": data.get("name", ""),
+            "picture": data.get("picture", ""),
+            "created_at": now_iso(),
+        })
+
+    session_token = uuid.uuid4().hex
+    expires = (now_utc() + timedelta(days=7)).isoformat()
+
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires,
+        "created_at": now_iso(),
+    })
+
+    user_obj = User(
+        user_id=user_id,
+        email=email,
+        name=data.get("name", ""),
+        picture=data.get("picture", ""),
+    )
+    await ensure_default_workspace(user_obj)
+
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        max_age=7 * 24 * 3600,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+    )
+
+    return {
+        "user_id": user_id,
+        "email": email,
+        "name": data.get("name", ""),
+        "picture": data.get("picture", ""),
+    }
+    
 @api_router.post("/auth/session")
 async def auth_session(payload: dict, response: Response):
     """Exchange session_id for session_token; persist user + session."""

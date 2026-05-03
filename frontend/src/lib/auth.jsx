@@ -3,7 +3,7 @@ import { api, setWorkspaceId, getWorkspaceId } from "@/lib/api";
 
 const Ctx = createContext(null);
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
 function loadGoogleScript() {
   return new Promise((resolve, reject) => {
@@ -55,7 +55,7 @@ export function AuthProvider({ children }) {
 
   const login = async () => {
     if (!GOOGLE_CLIENT_ID) {
-      alert("Falta VITE_GOOGLE_CLIENT_ID");
+      alert("Falta REACT_APP_GOOGLE_CLIENT_ID");
       return;
     }
 

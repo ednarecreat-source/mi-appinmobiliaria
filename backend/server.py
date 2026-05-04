@@ -923,6 +923,11 @@ async def _stats_for_month(ws: Workspace, ym: str) -> dict:
     async for p in db.properties.find({"workspace_id": ws.id}, {"_id": 0, "id": 1, "currency": 1}):
         cur_map[p["id"]] = p.get("currency", ws.display_currency)
 
+    # unit → property map (avoid N+1 query in reservations loop)
+    unit_to_property = {}
+    async for u in db.units.find({"workspace_id": ws.id}, {"_id": 0, "id": 1, "property_id": 1}):
+        unit_to_property[u["id"]] = u.get("property_id", "")
+
     total_monthly = 0.0
     async for t in db.tenants.find({"workspace_id": ws.id}, {"_id": 0, "monthly_rent": 1, "property_id": 1}):
         amt = float(t.get("monthly_rent", 0))
@@ -948,11 +953,8 @@ async def _stats_for_month(ws: Workspace, ym: str) -> dict:
     vacation_income = 0.0
     async for r in db.reservations.find({"workspace_id": ws.id, "status": {"$ne": "cancelled"}}, {"_id": 0, "check_in": 1, "total_amount": 1, "unit_id": 1}):
         if str(r.get("check_in", "")).startswith(ym):
-            # find currency via unit→property
-            unit_doc = await db.units.find_one({"id": r.get("unit_id"), "workspace_id": ws.id}, {"_id": 0, "property_id": 1})
-            cur = ws.display_currency
-            if unit_doc:
-                cur = cur_map.get(unit_doc.get("property_id", ""), ws.display_currency)
+            property_id = unit_to_property.get(r.get("unit_id"), "")
+            cur = cur_map.get(property_id, ws.display_currency) if property_id else ws.display_currency
             vacation_income += to_display(float(r.get("total_amount", 0)), cur, ws)
 
     total_expenses = invoice_net + fixed_monthly

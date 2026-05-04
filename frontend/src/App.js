@@ -1,9 +1,8 @@
 import { useState } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route, NavLink, useLocation, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import Login from "@/pages/Login";
-import AuthCallback from "@/pages/AuthCallback";
 import Dashboard from "@/pages/Dashboard";
 import Properties from "@/pages/Properties";
 import Tenants from "@/pages/Tenants";
@@ -127,9 +126,7 @@ function Shell() {
 }
 
 function AppRouter() {
-  const location = useLocation();
   const { user, loading } = useAuth();
-  if (location.hash?.includes("session_id=")) return <AuthCallback />;
   if (loading) return <div className="min-h-screen grid place-items-center bg-cream"><div className="text-sm text-ink-soft">Cargando…</div></div>;
   if (!user) return <Login />;
   return <Shell />;

@@ -3,22 +3,6 @@ import { api, setWorkspaceId, getWorkspaceId } from "@/lib/api";
 
 const Ctx = createContext(null);
 
-const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-
-function loadGoogleScript() {
-  return new Promise((resolve, reject) => {
-    if (window.google?.accounts?.id) return resolve();
-
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.onload = resolve;
-    script.onerror = reject;
-    document.body.appendChild(script);
-  });
-}
-
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [workspaces, setWorkspaces] = useState([]);
@@ -49,43 +33,33 @@ export function AuthProvider({ children }) {
     }
   }, [fetchWorkspaces]);
 
-  useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
+  useEffect(() => { checkAuth(); }, [checkAuth]);
 
-  const login = async () => {
-    if (!GOOGLE_CLIENT_ID) {
-      alert("Falta REACT_APP_GOOGLE_CLIENT_ID");
-      return;
-    }
+  const afterAuth = async (userData) => {
+    setUser(userData);
+    await fetchWorkspaces();
+  };
 
-    await loadGoogleScript();
+  const registerWithEmail = async ({ name, email, password }) => {
+    const { data } = await api.post("/auth/register", { name, email, password });
+    await afterAuth(data);
+    return data;
+  };
 
-    window.google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: async (response) => {
-        try {
-          await api.post("/auth/google", {
-            credential: response.credential,
-          });
-          await checkAuth();
-          window.location.href = "/dashboard";
-        } catch (err) {
-          console.error(err);
-          alert("No se pudo iniciar sesión con Google");
-        }
-      },
-    });
+  const loginWithEmail = async ({ email, password }) => {
+    const { data } = await api.post("/auth/login", { email, password });
+    await afterAuth(data);
+    return data;
+  };
 
-    window.google.accounts.id.prompt();
+  const loginWithGoogleCredential = async (credential) => {
+    const { data } = await api.post("/auth/google", { credential });
+    await afterAuth(data);
+    return data;
   };
 
   const logout = async () => {
-    try {
-      await api.post("/auth/logout");
-    } catch (e) {
-      // ignore
-    }
+    try { await api.post("/auth/logout"); } catch (e) { /* ignore */ }
     setUser(null);
     setWorkspaceId(null);
     window.location.href = "/";
@@ -97,19 +71,10 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <Ctx.Provider
-      value={{
-        user,
-        setUser,
-        workspaces,
-        activeWs,
-        switchWorkspace,
-        fetchWorkspaces,
-        loading,
-        login,
-        logout,
-      }}
-    >
+    <Ctx.Provider value={{
+      user, setUser, workspaces, activeWs, switchWorkspace, fetchWorkspaces, loading,
+      registerWithEmail, loginWithEmail, loginWithGoogleCredential, logout,
+    }}>
       {children}
     </Ctx.Provider>
   );

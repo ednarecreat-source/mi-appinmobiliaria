@@ -16,6 +16,9 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 import pandas as pd
+import bcrypt
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
@@ -32,7 +35,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
-EMERGENT_AUTH_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 
 app = FastAPI(title="RCT Gestión Inmobiliaria")
@@ -55,15 +58,23 @@ class User(BaseModel):
     email: str
     name: str
     picture: Optional[str] = ""
+    auth_provider: Optional[str] = "email"  # email | google
     created_at: str = Field(default_factory=now_iso)
 
 
-class UserSession(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    user_id: str
-    session_token: str
-    expires_at: str
-    created_at: str = Field(default_factory=now_iso)
+class RegisterIn(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class GoogleAuthIn(BaseModel):
+    credential: str  # Google ID token (JWT) from GIS
 
 
 class Workspace(BaseModel):
@@ -81,9 +92,6 @@ class WorkspaceIn(BaseModel):
     name: str
     display_currency: str = "EUR"
     exchange_rates: Dict[str, float] = {}
-
-class GoogleLoginPayload(BaseModel):
-    credential: str
 
 
 # ============ DOMAIN MODELS ============
@@ -357,146 +365,113 @@ async def get_workspace(
 
 
 # ============ AUTH ENDPOINTS ============
-@api_router.post("/auth/google")
-async def auth_google(payload: GoogleLoginPayload, response: Response):
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(500, "Falta GOOGLE_CLIENT_ID")
+def _hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-    async with httpx.AsyncClient(timeout=15.0) as cli:
-        r = await cli.get(
-            "https://oauth2.googleapis.com/tokeninfo",
-            params={"id_token": payload.credential},
-        )
 
-    if r.status_code != 200:
-        raise HTTPException(401, "Google rechazó el token")
+def _verify_password(pw: str, h: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), h.encode("utf-8"))
+    except Exception:
+        return False
 
-    data = r.json()
 
-    if data.get("aud") != GOOGLE_CLIENT_ID:
-        raise HTTPException(401, "Google Client ID no coincide")
-
-    email = data.get("email")
-    if not email:
-        raise HTTPException(400, "Email no recibido")
-
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
-
-    if existing:
-        user_id = existing["user_id"]
-        await db.users.update_one(
-            {"user_id": user_id},
-            {
-                "$set": {
-                    "name": data.get("name", existing.get("name", "")),
-                    "picture": data.get("picture", existing.get("picture", "")),
-                }
-            },
-        )
-    else:
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({
-            "user_id": user_id,
-            "email": email,
-            "name": data.get("name", ""),
-            "picture": data.get("picture", ""),
-            "created_at": now_iso(),
-        })
-
-    session_token = uuid.uuid4().hex
+async def _create_session(user_id: str, response: Response) -> str:
+    token = f"sess_{uuid.uuid4().hex}{uuid.uuid4().hex}"
     expires = (now_utc() + timedelta(days=7)).isoformat()
-
     await db.user_sessions.insert_one({
-        "user_id": user_id,
-        "session_token": session_token,
-        "expires_at": expires,
-        "created_at": now_iso(),
+        "user_id": user_id, "session_token": token,
+        "expires_at": expires, "created_at": now_iso(),
     })
+    response.set_cookie(
+        key="session_token", value=token, max_age=7 * 24 * 3600,
+        httponly=True, secure=True, samesite="none", path="/",
+    )
+    return token
 
+
+def _normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+@api_router.get("/auth/config")
+async def auth_config():
+    return {"google_enabled": bool(GOOGLE_CLIENT_ID), "google_client_id": GOOGLE_CLIENT_ID}
+
+
+@api_router.post("/auth/register")
+async def auth_register(payload: RegisterIn, response: Response):
+    email = _normalize_email(payload.email)
+    if not email or "@" not in email:
+        raise HTTPException(400, "Email inválido")
+    if len(payload.password) < 6:
+        raise HTTPException(400, "La contraseña debe tener al menos 6 caracteres")
+    if not payload.name.strip():
+        raise HTTPException(400, "Nombre requerido")
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        raise HTTPException(409, "Ya existe una cuenta con ese email")
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    await db.users.insert_one({
+        "user_id": user_id, "email": email, "name": payload.name.strip(),
+        "picture": "", "password_hash": _hash_password(payload.password),
+        "auth_provider": "email", "created_at": now_iso(),
+    })
+    user_obj = User(user_id=user_id, email=email, name=payload.name.strip(), picture="", auth_provider="email")
+    await ensure_default_workspace(user_obj)
+    await _create_session(user_id, response)
+    return {"user_id": user_id, "email": email, "name": payload.name.strip(), "picture": ""}
+
+
+@api_router.post("/auth/login")
+async def auth_login(payload: LoginIn, response: Response):
+    email = _normalize_email(payload.email)
+    user_doc = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user_doc or not user_doc.get("password_hash"):
+        raise HTTPException(401, "Email o contraseña incorrectos")
+    if not _verify_password(payload.password, user_doc["password_hash"]):
+        raise HTTPException(401, "Email o contraseña incorrectos")
     user_obj = User(
-        user_id=user_id,
-        email=email,
-        name=data.get("name", ""),
-        picture=data.get("picture", ""),
+        user_id=user_doc["user_id"], email=user_doc["email"], name=user_doc.get("name", ""),
+        picture=user_doc.get("picture", ""), auth_provider=user_doc.get("auth_provider", "email"),
     )
     await ensure_default_workspace(user_obj)
+    await _create_session(user_doc["user_id"], response)
+    return {"user_id": user_doc["user_id"], "email": user_doc["email"], "name": user_doc.get("name", ""), "picture": user_doc.get("picture", "")}
 
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        max_age=7 * 24 * 3600,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        path="/",
-    )
 
-    return {
-        "user_id": user_id,
-        "email": email,
-        "name": data.get("name", ""),
-        "picture": data.get("picture", ""),
-    }
-    
-@api_router.post("/auth/session")
-async def auth_session(payload: dict, response: Response):
-    """Exchange session_id for session_token; persist user + session."""
-    session_id = payload.get("session_id")
-    if not session_id:
-        raise HTTPException(400, "Missing session_id")
-    async with httpx.AsyncClient(timeout=15.0) as cli:
-        r = await cli.get(EMERGENT_AUTH_URL, headers={"X-Session-ID": session_id})
-        if r.status_code != 200:
-            raise HTTPException(401, "Auth provider rejected session")
-        data = r.json()
-
-    email = data.get("email")
-    if not email:
-        raise HTTPException(400, "Email no recibido")
-
+@api_router.post("/auth/google")
+async def auth_google(payload: GoogleAuthIn, response: Response):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(500, "GOOGLE_CLIENT_ID no configurado en el servidor")
+    try:
+        info = google_id_token.verify_oauth2_token(
+            payload.credential, google_requests.Request(), GOOGLE_CLIENT_ID,
+        )
+    except Exception as e:
+        raise HTTPException(401, f"Token de Google inválido: {e}")
+    email = _normalize_email(info.get("email", ""))
+    if not email or not info.get("email_verified", False):
+        raise HTTPException(401, "Email de Google no verificado")
+    name = info.get("name") or email.split("@")[0]
+    picture = info.get("picture", "")
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
         await db.users.update_one(
             {"user_id": user_id},
-            {"$set": {"name": data.get("name", existing.get("name", "")), "picture": data.get("picture", existing.get("picture", ""))}},
+            {"$set": {"name": name, "picture": picture, "auth_provider": existing.get("auth_provider") or "google"}},
         )
     else:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         await db.users.insert_one({
-            "user_id": user_id,
-            "email": email,
-            "name": data.get("name", ""),
-            "picture": data.get("picture", ""),
-            "created_at": now_iso(),
+            "user_id": user_id, "email": email, "name": name, "picture": picture,
+            "auth_provider": "google", "created_at": now_iso(),
         })
-
-    session_token = data.get("session_token")
-    if not session_token:
-        raise HTTPException(500, "session_token vacío")
-
-    expires = (now_utc() + timedelta(days=7)).isoformat()
-    await db.user_sessions.insert_one({
-        "user_id": user_id,
-        "session_token": session_token,
-        "expires_at": expires,
-        "created_at": now_iso(),
-    })
-
-    # Ensure user has a workspace
-    user_obj = User(user_id=user_id, email=email, name=data.get("name", ""), picture=data.get("picture", ""))
+    user_obj = User(user_id=user_id, email=email, name=name, picture=picture, auth_provider="google")
     await ensure_default_workspace(user_obj)
-
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        max_age=7 * 24 * 3600,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        path="/",
-    )
-    return {"user_id": user_id, "email": email, "name": data.get("name", ""), "picture": data.get("picture", "")}
+    await _create_session(user_id, response)
+    return {"user_id": user_id, "email": email, "name": name, "picture": picture}
 
 
 @api_router.get("/auth/me")
@@ -505,9 +480,14 @@ async def auth_me(user: User = Depends(get_current_user)):
 
 
 @api_router.post("/auth/logout")
-async def auth_logout(response: Response, session_token: Optional[str] = Cookie(None)):
-    if session_token:
-        await db.user_sessions.delete_one({"session_token": session_token})
+async def auth_logout(request: Request, response: Response, session_token: Optional[str] = Cookie(None)):
+    token = session_token
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
 
@@ -1251,7 +1231,7 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origin_regex=".*",
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -1,44 +1,39 @@
 # RCT Gestión Inmobiliaria — PRD
 
-## Iteraciones
+## Iter 6 — Admin + Allowlist + Vercel diagnostics (estado actual)
 
-### Iter 1 — MVP (CRUD + IA facturas + calendario)
-### Iter 2 — Rediseño sage + PDF + validación %
-### Iter 3 — Gastos fijos + Resumen financiero
-### Iter 4 — Multi-cartera + Multi-divisa + Banco + Histórico
-### Iter 5 — Auth refactor (sin Emergent) + Google OAuth + reCAPTCHA v3 + fix 401 con Bearer token
+### Bug fix: registro
+- Validación previa antes de `setBusy(true)`
+- `executeRecaptcha` con timeout 8s y manejo robusto de errores (no se cuelga nunca)
+- Mensajes de error específicos por status HTTP
+- **Manejo de errores de red** (sin response): aviso claro al usuario sobre `REACT_APP_BACKEND_URL` mal configurado en Vercel
 
-## Estado actual (Iter 5 — completo)
+### Sistema admin
+- Modelo `User.is_admin` + `AllowlistEntry`
+- Admin user auto-seeded al arrancar el backend (`admin@rct.app` / `Admin-RCT-2026!`, configurable)
+- Admin protegido contra auto-eliminación / auto-degradación
+- Endpoints `/api/admin/allowlist` (GET/POST/DELETE) para gestionar emails autorizados
+- Endpoints `/api/admin/users` (GET, DELETE, PUT toggle is_admin)
+- **Gating**: `_is_email_allowed()` — si la lista blanca tiene entradas, solo esos emails (+ admin) pueden registrarse o hacer first-time Google sign-in. Si la lista está vacía, registro abierto.
+- Página `/admin` (solo visible para admins) con UI para gestionar allowlist y usuarios
 
-**Auth:**
-- Email/password con bcrypt
-- Google OAuth directo (validación con `google-auth` server-side, sin intermediario)
-- reCAPTCHA v3 invisible (gates `/auth/register` y `/auth/login`; `/auth/google` se valida vía Google ID Token)
-- Sesión propia: `session_token` devuelta en JSON + cookie httpOnly fallback
-- Frontend usa `Authorization: Bearer <token>` desde localStorage
-- Interceptor 401 axios → limpia token + redirige a login
-
-**Funcionalidad core (ver README.md):**
-- 5 secciones (Dashboard, Inmuebles, Inquilinos, Facturación, Banco, Vacacional, Histórico, Ajustes)
-- IA GPT-4o (lectura facturas + categorización banco)
-- Multi-cartera con invitación por email
-- Multi-divisa (EUR/USD/GBP/MXN/ARS/COP)
-- Histórico anual con snapshots por mes
+### Vercel diagnostics
+- Endpoint `/api/health` con estado de DB + auth providers + AI key
+- Logs en startup: `MongoDB connection OK / FAILED` con info clara
+- Frontend muestra mensaje específico cuando falla la red (típico Vercel mal configurado)
+- Documento `/app/VERCEL_DEPLOYMENT_GUIDE.md` con guía paso a paso para Vercel + Railway + MongoDB Atlas
 
 ## Testing
-- Iter 5: **17/17 pytest 100%** — token Bearer, reCAPTCHA gating, regresión completa, aislamiento multi-tenant, no leaks de _id
-- Deployment health check: **PASS** (sin blockers)
+- Backend: **24/24 pytest 100%** (admin flow + allowlist + register fix + regression)
+
+## Credenciales
+- Admin: `admin@rct.app` / `Admin-RCT-2026!` (configurable via env)
 
 ## Backlog
 - P1: Cascade delete completo al borrar inmueble
 - P1: Endpoint para revocar todas las sesiones de un usuario
-- P2: Rate limiting en /auth/login y /auth/register
-- P2: Sanitizar mensaje de error en /auth/google (no leak de stacktrace)
-- P2: Splittear server.py en routers/services
+- P2: Rate limiting en /auth/*
 - P2: Recuperación de contraseña (SendGrid/Resend)
 - P2: Modelo 303/130 trimestral
 - P2: iCal sync Airbnb/Booking
-- P2: PSD2 real (banca conectada)
-
-## Despliegue
-Ver `/app/README.md` para opciones detalladas (Emergent nativo vs Vercel+Railway+MongoDB Atlas).
+- P2: Conexión bancaria real PSD2

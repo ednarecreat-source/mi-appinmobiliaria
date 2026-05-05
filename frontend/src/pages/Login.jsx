@@ -139,7 +139,26 @@ export default function Login() {
         toast.success("Bienvenido");
       }
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Error");
+      const detail = err?.response?.data?.detail;
+      const status = err?.response?.status;
+      console.error("auth error", status, detail, err);
+      // Network/CORS error: no response from backend (typical when REACT_APP_BACKEND_URL is wrong on Vercel)
+      if (!err?.response) {
+        toast.error(
+          "No se puede contactar con el servidor. Comprueba que REACT_APP_BACKEND_URL apunta a tu backend desplegado (Railway/Render/Emergent). " +
+          (err?.message ? "Detalle: " + err.message : ""),
+          { duration: 9000 }
+        );
+        return;
+      }
+      if (typeof detail === "string") toast.error(detail);
+      else if (status === 409) toast.error("Ya existe una cuenta con ese email");
+      else if (status === 403) toast.error(detail || "Acceso denegado");
+      else if (status === 401) toast.error("Email o contraseña incorrectos");
+      else if (status === 422) toast.error("Datos inválidos. Revisa el formulario.");
+      else if (status === 502 || status === 503) toast.error("Servidor no disponible. Inténtalo en unos segundos.");
+      else if (status >= 500) toast.error("Error del servidor. Revisa los logs del backend.");
+      else toast.error("No se pudo completar la operación");
     } finally {
       setBusy(false);
     }
@@ -253,15 +272,6 @@ export default function Login() {
             ) : (
               <>¿No tienes cuenta?{" "}
                 <button onClick={() => setMode("register")} className="text-sage-700 font-semibold hover:underline" data-testid="switch-to-register">Crea una</button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-text-sage-700 font-semibold hover:underline" data-testid="switch-to-register">Crea una</button>
               </>
             )}
           </div>

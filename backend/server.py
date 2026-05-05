@@ -1368,7 +1368,35 @@ async def delete_bank(bid: str, ws: Workspace = Depends(get_workspace)):
 
 @api_router.get("/")
 async def root():
-    return {"app": "RCT Gestión Inmobiliaria", "version": "2.0"}
+    return {"app": "RCT Gestión Inmobiliaria", "version": "2.1"}
+
+
+@api_router.get("/health")
+async def health():
+    """Diagnóstico para producción. Devuelve estado de DB y configuración."""
+    db_ok = False
+    db_error = None
+    try:
+        await db.command("ping")
+        db_ok = True
+    except Exception as e:
+        db_error = str(e)
+    return {
+        "ok": db_ok,
+        "database": {
+            "connected": db_ok,
+            "name": os.environ.get("DB_NAME", "(no DB_NAME)"),
+            "url_set": bool(os.environ.get("MONGO_URL")),
+            "error": db_error,
+        },
+        "auth": {
+            "google_enabled": bool(GOOGLE_CLIENT_ID),
+            "recaptcha_enabled": bool(RECAPTCHA_SECRET_KEY),
+        },
+        "ai": {
+            "emergent_llm_key_set": bool(EMERGENT_LLM_KEY),
+        },
+    }
 
 
 app.include_router(api_router)
@@ -1382,6 +1410,26 @@ app.add_middleware(
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+
+@app.on_event("startup")
+async def verify_db_connection():
+    """Verify MongoDB connectivity at startup and log clearly if it fails."""
+    try:
+        await db.command("ping")
+        logger.info("=" * 70)
+        logger.info("MongoDB connection OK")
+        logger.info("  MONGO_URL set: %s", bool(os.environ.get("MONGO_URL")))
+        logger.info("  DB_NAME: %s", os.environ.get("DB_NAME", "(missing)"))
+        logger.info("=" * 70)
+    except Exception as e:
+        logger.error("=" * 70)
+        logger.error("MONGODB CONNECTION FAILED")
+        logger.error("  Error: %s", e)
+        logger.error("  Check that MONGO_URL and DB_NAME are set correctly in environment")
+        logger.error("  Current MONGO_URL set: %s", bool(os.environ.get("MONGO_URL")))
+        logger.error("  Current DB_NAME: %s", os.environ.get("DB_NAME", "(missing)"))
+        logger.error("=" * 70)
 
 
 @app.on_event("startup")

@@ -1,0 +1,45 @@
+{
+  "summary": "Iter 6 backend-only testing of the new localStorage-Bearer auth + reCAPTCHA v3 gating. 17/17 pytest tests pass. Verified: (1) /auth/register, /auth/login, /auth/google all return a non-empty `token` field in JSON; (2) Bearer-only auth (no cookie, fresh requests.Session) works for /auth/me, /properties, /dashboard/stats, /workspaces; (3) /auth/config exposes recaptcha_enabled=true and recaptcha_site_key when RECAPTCHA_* env is set; (4) /auth/register without recaptcha_token => 400 'Falta verificación reCAPTCHA'; with bogus token => 401 'reCAPTCHA inválido'; same for /auth/login; (5) /auth/google does NOT require recaptcha (bogus JWT => 401, not 400 for missing recaptcha); (6) full regression under Bearer auth: properties/units/tenants/reservations/fixed-expenses/dashboard/stats, bank CRUD+bulk, history close/months/year/delete, invoices/analyze reachable with both image(PNG) and PDF, workspaces invite/remove member, multi-tenant isolation (403 on cross-user X-Workspace-Id), 401 on all domain endpoints without token and on /auth/me with bogus token. .env was temporarily patched (RECAPTCHA_SECRET_KEY='') for the regression phase and fully restored with supervisor restart at the end (verified real keys back, /auth/config.recaptcha_enabled=true).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/register|login", "issue": "reCAPTCHA failure returns 401 for invalid token but 403 when score is below MIN_SCORE; frontend should treat both distinctly (currently only 400 is documented in spec)."},
+      {"endpoint": "POST /api/auth/register|login", "issue": "reCAPTCHA verification is performed BEFORE email/password validation and duplicate-email check — on a 'missing recaptcha' 400 the server reveals no info about the form, which is fine, but if an attacker supplies a valid token they can still enumerate accounts via 401 vs 200 timing. Consider rate limiting."},
+      {"endpoint": "POST /api/auth/google", "issue": "When credential is malformed JWT, google-auth raises ValueError and we return 401 with error details in message ('Token de Google inválido: <stack-ish msg>'). OK for debug, but message may leak internal info. Consider sanitizing."},
+      {"endpoint": "_create_session", "issue": "Still sets httpOnly cookie AND returns token in JSON. Works by design (cookie fallback) but double-state means /auth/logout only deletes cookie + current DB session; any token in localStorage persists on client until frontend clears it. The 401-interceptor in api.js handles this on the client, but server cannot invalidate all sessions of a user on password change (no endpoint to rotate/revoke all)."},
+      {"endpoint": "server.py (still ~1280 lines)", "issue": "File remains monolithic — recommended to split into routers/ and services/. Non-blocking."},
+      {"endpoint": "/api/auth/config", "issue": "Returns google_client_id in plaintext (standard for GIS) and recaptcha_site_key (public by design). Fine, but no caching headers set; browsers will re-fetch on every login page load."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_auth_iter6.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Add server-side rate limiting on /auth/login and /auth/register to mitigate account enumeration (reCAPTCHA v3 alone is not enough at low scores).",
+    "(Optional) Sanitize the google_id_token exception message in /auth/google before returning in 401.",
+    "(Optional, reiterated) Split server.py into routers/services modules (still ~1280 lines).",
+    "(Optional) Add an endpoint to revoke all sessions of a user (e.g., on password change or explicit 'logout everywhere')."
+  ],
+  "critical_code_review_comments": [
+    "_verify_recaptcha correctly bypasses verification when RECAPTCHA_SECRET_KEY is empty, letting tests and dev runs work without Google. Good toggle.",
+    "_create_session now returns token in the JSON response so the frontend can store it in localStorage and send Authorization: Bearer — confirmed end-to-end with a fresh requests.Session that has zero cookies.",
+    "get_current_user accepts either Cookie or Authorization Bearer — tested both paths; Bearer-only works on every domain endpoint.",
+    "/auth/google is correctly NOT gated by reCAPTCHA (Google's own ID token verification is the proof-of-humanity).",
+    "CORS allow_origin_regex='.*' with allow_credentials=True is still required for cookie fallback; with Bearer this becomes less critical but preserved for backwards compat.",
+    "Multi-tenant isolation preserved under Bearer auth: B cannot list A's workspace properties (403) and does not see A's items in its own default workspace.",
+    "No _id leakage across any tested endpoint (deep-recursive check on properties, units, tenants, invoices, reservations, fixed-expenses, bank, history, dashboard, workspaces, auth responses)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_iter6.py",
+    "/app/backend/.env (temporarily during tests; restored to original at end — verified via /auth/config)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "not tested (per testing_type=backend only)"},
+  "test_credentials": "Dynamically registered TEST_iter6_*@example.com / Secret123! during tests; all cleaned up in Mongo afterwards. No shared admin account needed.",
+  "seed_data_creation": "Tests register fresh users per run with TEST_iter6_ prefix. All users, sessions, workspaces, properties/units/tenants/invoices/reservations/fixed_expenses/bank_transactions/monthly_snapshots created are deleted in module-scoped fixture teardowns and a final sweep was done manually (0 TEST_ users remain).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 6 suite in /app/backend/tests/test_auth_iter6.py (17 tests) covers: recaptcha gating (Phase 1), token+Bearer-only (Phase 2 with RECAPTCHA_SECRET_KEY='' temporarily), full regression. Suite self-restores .env and restarts backend; safe to rerun. Iter 5 suite (/app/backend/tests/test_auth_iter5.py) still works for the non-recaptcha auth surface. To re-run: pytest /app/backend/tests/test_auth_iter6.py -v. Real reCAPTCHA positive path still cannot be tested headless — only browser-driven flows can generate a valid v3 token. If frontend testing is requested, drive Login.jsx with Playwright and let reCAPTCHA v3 execute via window.grecaptcha.",
+  "rca of the issue": "No issues to RCA — all review_request items pass: (a) token returned, (b) Bearer-only works, (c) /auth/config reports recaptcha_enabled+site_key, (d) register/login correctly reject missing/bogus recaptcha with 400/401, (e) /auth/google is not gated by recaptcha, (f) regression suite passes, (g) /auth/me still cleanly 401s without/with bad token."
+}

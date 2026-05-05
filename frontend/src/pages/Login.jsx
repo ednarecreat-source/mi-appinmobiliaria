@@ -4,30 +4,46 @@ import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Leaf, Sparkles, Building2, Wallet, Globe2, Eye, EyeOff, Mail, Lock, User } from "lucide-react";
+import { Leaf, Sparkles, Building2, Wallet, Globe2, Eye, EyeOff, Mail, Lock, User, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
-function loadGoogleScript() {
-  if (window.google?.accounts?.id) return Promise.resolve();
+function loadScript(src, id) {
+  if (document.getElementById(id)) {
+    return new Promise((resolve) => {
+      const t = document.getElementById(id);
+      if (t.dataset.loaded === "true") return resolve();
+      t.addEventListener("load", () => resolve(), { once: true });
+    });
+  }
   return new Promise((resolve, reject) => {
-    if (document.getElementById("google-gsi")) {
-      const check = () => window.google?.accounts?.id ? resolve() : setTimeout(check, 50);
-      return check();
-    }
     const s = document.createElement("script");
-    s.id = "google-gsi";
-    s.src = "https://accounts.google.com/gsi/client";
-    s.async = true;
-    s.defer = true;
-    s.onload = () => resolve();
+    s.id = id; s.src = src; s.async = true; s.defer = true;
+    s.onload = () => { s.dataset.loaded = "true"; resolve(); };
     s.onerror = reject;
     document.head.appendChild(s);
   });
 }
 
+async function executeRecaptcha(siteKey, action) {
+  if (!siteKey) return null;
+  await loadScript(`https://www.google.com/recaptcha/api.js?render=${siteKey}`, "recaptcha-v3");
+  return new Promise((resolve) => {
+    const tryRun = () => {
+      if (window.grecaptcha?.ready) {
+        window.grecaptcha.ready(() => {
+          window.grecaptcha.execute(siteKey, { action }).then(resolve).catch(() => resolve(null));
+        });
+      } else {
+        setTimeout(tryRun, 80);
+      }
+    };
+    tryRun();
+  });
+}
+
 export default function Login() {
   const { loginWithEmail, registerWithEmail, loginWithGoogleCredential } = useAuth();
-  const [mode, setMode] = useState("login"); // login | register
+  const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -35,6 +51,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [googleClientId, setGoogleClientId] = useState("");
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = useState("");
   const googleBtnRef = useRef(null);
 
   useEffect(() => {
@@ -43,21 +60,28 @@ export default function Login() {
         const { data } = await api.get("/auth/config");
         setGoogleEnabled(!!data.google_enabled);
         setGoogleClientId(data.google_client_id || "");
+        if (data.recaptcha_enabled && data.recaptcha_site_key) setRecaptchaSiteKey(data.recaptcha_site_key);
       } catch (e) {
-        // fallback: check env var baked into frontend
-        const envId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
-        if (envId) { setGoogleEnabled(true); setGoogleClientId(envId); }
+        const envG = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
+        if (envG) { setGoogleEnabled(true); setGoogleClientId(envG); }
+        const envR = process.env.REACT_APP_RECAPTCHA_SITE_KEY || "";
+        if (envR) setRecaptchaSiteKey(envR);
       }
     })();
   }, []);
+
+  // Pre-load recaptcha early so it's ready by the time user submits
+  useEffect(() => {
+    if (recaptchaSiteKey) loadScript(`https://www.google.com/recaptcha/api.js?render=${recaptchaSiteKey}`, "recaptcha-v3");
+  }, [recaptchaSiteKey]);
 
   useEffect(() => {
     if (!googleEnabled || !googleClientId) return;
     let mounted = true;
     (async () => {
       try {
-        await loadGoogleScript();
-        if (!mounted || !googleBtnRef.current) return;
+        await loadScript("https://accounts.google.com/gsi/client", "google-gsi");
+        if (!mounted || !googleBtnRef.current || !window.google?.accounts?.id) return;
         window.google.accounts.id.initialize({
           client_id: googleClientId,
           callback: async (resp) => {
@@ -75,9 +99,7 @@ export default function Login() {
           text: mode === "register" ? "signup_with" : "continue_with",
           shape: "pill",
         });
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) { /* ignore */ }
     })();
     return () => { mounted = false; };
   }, [googleEnabled, googleClientId, mode, loginWithGoogleCredential]);
@@ -86,13 +108,16 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     try {
+      const recaptcha_token = recaptchaSiteKey
+        ? await executeRecaptcha(recaptchaSiteKey, mode === "register" ? "register" : "login")
+        : null;
       if (mode === "register") {
-        if (!name.trim()) return toast.error("Escribe tu nombre");
-        if (password.length < 6) return toast.error("La contraseña debe tener 6+ caracteres");
-        await registerWithEmail({ name, email, password });
+        if (!name.trim()) { toast.error("Escribe tu nombre"); setBusy(false); return; }
+        if (password.length < 6) { toast.error("La contraseña debe tener 6+ caracteres"); setBusy(false); return; }
+        await registerWithEmail({ name, email, password, recaptcha_token });
         toast.success("Cuenta creada. ¡Bienvenido!");
       } else {
-        await loginWithEmail({ email, password });
+        await loginWithEmail({ email, password, recaptcha_token });
         toast.success("Bienvenido");
       }
     } catch (err) {
@@ -104,7 +129,6 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row bg-cream">
-      {/* Left brand */}
       <div className="lg:w-[55%] relative overflow-hidden p-8 lg:p-16 flex flex-col justify-between">
         <div className="absolute -top-20 -left-20 w-96 h-96 rounded-full bg-sage-200 blur-3xl opacity-50 pointer-events-none" />
         <div className="absolute bottom-0 right-0 w-80 h-80 rounded-full bg-sage-100 blur-3xl opacity-60 pointer-events-none" />
@@ -140,21 +164,14 @@ export default function Login() {
             ))}
           </div>
         </div>
-        <div className="relative text-xs text-ink-muted mono">v2.0</div>
+        <div className="relative text-xs text-ink-muted mono">v2.1</div>
       </div>
 
-      {/* Right card */}
       <div className="lg:w-[45%] p-8 lg:p-16 flex items-center justify-center">
         <div className="card-soft p-8 w-full max-w-md">
-          <div className="w-14 h-14 rounded-2xl bg-sage-100 grid place-items-center text-sage-700 mb-5">
-            <Wallet className="w-7 h-7" />
-          </div>
-          <h2 className="font-serif font-bold text-3xl tracking-tight">
-            {mode === "register" ? "Crea tu cuenta" : "Inicia sesión"}
-          </h2>
-          <p className="text-sm text-ink-soft mt-2">
-            {mode === "register" ? "Con email y contraseña o con Google." : "Entra con email y contraseña, o con Google."}
-          </p>
+          <div className="w-14 h-14 rounded-2xl bg-sage-100 grid place-items-center text-sage-700 mb-5"><Wallet className="w-7 h-7" /></div>
+          <h2 className="font-serif font-bold text-3xl tracking-tight">{mode === "register" ? "Crea tu cuenta" : "Inicia sesión"}</h2>
+          <p className="text-sm text-ink-soft mt-2">{mode === "register" ? "Con email y contraseña o con Google." : "Entra con email y contraseña, o con Google."}</p>
 
           <form onSubmit={submit} className="mt-6 space-y-4" data-testid="auth-form">
             {mode === "register" && (
@@ -189,6 +206,13 @@ export default function Login() {
             </Button>
           </form>
 
+          {recaptchaSiteKey && (
+            <div className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-ink-muted">
+              <ShieldCheck className="w-3.5 h-3.5 text-sage-600" />
+              Protegido por reCAPTCHA v3
+            </div>
+          )}
+
           <div className="mt-5 flex items-center gap-3">
             <div className="h-px flex-1 bg-border" />
             <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-ink-muted">o</div>
@@ -199,7 +223,7 @@ export default function Login() {
             <div ref={googleBtnRef} className="mt-5 flex justify-center" data-testid="google-btn" />
           ) : (
             <div className="mt-5 rounded-xl border border-dashed border-border bg-sage-50/40 p-4 text-xs text-ink-soft text-center">
-              Google OAuth no está configurado. Puedes usar email y contraseña o pedir al administrador que añada <code className="mono text-sage-700">GOOGLE_CLIENT_ID</code> en el servidor.
+              Google OAuth no está configurado. Puedes usar email y contraseña.
             </div>
           )}
 

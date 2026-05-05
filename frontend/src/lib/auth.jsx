@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { api, setWorkspaceId, getWorkspaceId } from "@/lib/api";
+import { api, setWorkspaceId, getWorkspaceId, setAuthToken, getAuthToken, setUnauthorizedHandler } from "@/lib/api";
 
 const Ctx = createContext(null);
 
@@ -22,11 +22,19 @@ export function AuthProvider({ children }) {
   }, []);
 
   const checkAuth = useCallback(async () => {
+    const token = getAuthToken();
+    if (!token) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
       await fetchWorkspaces();
     } catch {
+      setAuthToken(null);
+      setWorkspaceId(null);
       setUser(null);
     } finally {
       setLoading(false);
@@ -35,19 +43,30 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { checkAuth(); }, [checkAuth]);
 
+  // Register the global 401 handler
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      setActiveWs(null);
+      setWorkspaces([]);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   const afterAuth = async (userData) => {
+    if (userData?.token) setAuthToken(userData.token);
     setUser(userData);
     await fetchWorkspaces();
   };
 
-  const registerWithEmail = async ({ name, email, password }) => {
-    const { data } = await api.post("/auth/register", { name, email, password });
+  const registerWithEmail = async ({ name, email, password, recaptcha_token }) => {
+    const { data } = await api.post("/auth/register", { name, email, password, recaptcha_token });
     await afterAuth(data);
     return data;
   };
 
-  const loginWithEmail = async ({ email, password }) => {
-    const { data } = await api.post("/auth/login", { email, password });
+  const loginWithEmail = async ({ email, password, recaptcha_token }) => {
+    const { data } = await api.post("/auth/login", { email, password, recaptcha_token });
     await afterAuth(data);
     return data;
   };
@@ -60,8 +79,11 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch (e) { /* ignore */ }
-    setUser(null);
+    setAuthToken(null);
     setWorkspaceId(null);
+    setUser(null);
+    setActiveWs(null);
+    setWorkspaces([]);
     window.location.href = "/";
   };
 

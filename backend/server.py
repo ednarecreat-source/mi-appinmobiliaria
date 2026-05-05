@@ -36,6 +36,8 @@ db = client[os.environ['DB_NAME']]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
+RECAPTCHA_SECRET_KEY = os.environ.get('RECAPTCHA_SECRET_KEY', '').strip()
+RECAPTCHA_MIN_SCORE = float(os.environ.get('RECAPTCHA_MIN_SCORE', '0.5'))
 
 app = FastAPI(title="RCT Gestión Inmobiliaria")
 api_router = APIRouter(prefix="/api")
@@ -65,11 +67,13 @@ class RegisterIn(BaseModel):
     name: str
     email: str
     password: str
+    recaptcha_token: Optional[str] = None
 
 
 class LoginIn(BaseModel):
     email: str
     password: str
+    recaptcha_token: Optional[str] = None
 
 
 class GoogleAuthIn(BaseModel):
@@ -382,6 +386,7 @@ async def _create_session(user_id: str, response: Response) -> str:
         "user_id": user_id, "session_token": token,
         "expires_at": expires, "created_at": now_iso(),
     })
+    # Cookie (works same-origin / preview); also returned in JSON for header-based auth
     response.set_cookie(
         key="session_token", value=token, max_age=7 * 24 * 3600,
         httponly=True, secure=True, samesite="none", path="/",
@@ -393,13 +398,41 @@ def _normalize_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
+async def _verify_recaptcha(token: Optional[str], action: str) -> None:
+    """If RECAPTCHA_SECRET_KEY is configured, verify the v3 token. Otherwise skip silently."""
+    if not RECAPTCHA_SECRET_KEY:
+        return
+    if not token:
+        raise HTTPException(400, "Falta verificación reCAPTCHA")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as cli:
+            r = await cli.post(
+                "https://www.google.com/recaptcha/api/siteverify",
+                data={"secret": RECAPTCHA_SECRET_KEY, "response": token},
+            )
+            data = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"Error reCAPTCHA: {e}")
+    if not data.get("success"):
+        raise HTTPException(401, "reCAPTCHA inválido")
+    score = float(data.get("score", 0))
+    if score < RECAPTCHA_MIN_SCORE:
+        raise HTTPException(403, f"Actividad sospechosa (score {score:.2f})")
+
+
 @api_router.get("/auth/config")
 async def auth_config():
-    return {"google_enabled": bool(GOOGLE_CLIENT_ID), "google_client_id": GOOGLE_CLIENT_ID}
+    return {
+        "google_enabled": bool(GOOGLE_CLIENT_ID),
+        "google_client_id": GOOGLE_CLIENT_ID,
+        "recaptcha_enabled": bool(RECAPTCHA_SECRET_KEY),
+        "recaptcha_site_key": os.environ.get('RECAPTCHA_SITE_KEY', '').strip(),
+    }
 
 
 @api_router.post("/auth/register")
 async def auth_register(payload: RegisterIn, response: Response):
+    await _verify_recaptcha(payload.recaptcha_token, "register")
     email = _normalize_email(payload.email)
     if not email or "@" not in email:
         raise HTTPException(400, "Email inválido")
@@ -418,12 +451,13 @@ async def auth_register(payload: RegisterIn, response: Response):
     })
     user_obj = User(user_id=user_id, email=email, name=payload.name.strip(), picture="", auth_provider="email")
     await ensure_default_workspace(user_obj)
-    await _create_session(user_id, response)
-    return {"user_id": user_id, "email": email, "name": payload.name.strip(), "picture": ""}
+    token = await _create_session(user_id, response)
+    return {"user_id": user_id, "email": email, "name": payload.name.strip(), "picture": "", "token": token}
 
 
 @api_router.post("/auth/login")
 async def auth_login(payload: LoginIn, response: Response):
+    await _verify_recaptcha(payload.recaptcha_token, "login")
     email = _normalize_email(payload.email)
     user_doc = await db.users.find_one({"email": email}, {"_id": 0})
     if not user_doc or not user_doc.get("password_hash"):
@@ -435,8 +469,8 @@ async def auth_login(payload: LoginIn, response: Response):
         picture=user_doc.get("picture", ""), auth_provider=user_doc.get("auth_provider", "email"),
     )
     await ensure_default_workspace(user_obj)
-    await _create_session(user_doc["user_id"], response)
-    return {"user_id": user_doc["user_id"], "email": user_doc["email"], "name": user_doc.get("name", ""), "picture": user_doc.get("picture", "")}
+    token = await _create_session(user_doc["user_id"], response)
+    return {"user_id": user_doc["user_id"], "email": user_doc["email"], "name": user_doc.get("name", ""), "picture": user_doc.get("picture", ""), "token": token}
 
 
 @api_router.post("/auth/google")
@@ -469,8 +503,8 @@ async def auth_google(payload: GoogleAuthIn, response: Response):
         })
     user_obj = User(user_id=user_id, email=email, name=name, picture=picture, auth_provider="google")
     await ensure_default_workspace(user_obj)
-    await _create_session(user_id, response)
-    return {"user_id": user_id, "email": email, "name": name, "picture": picture}
+    token = await _create_session(user_id, response)
+    return {"user_id": user_id, "email": email, "name": name, "picture": picture, "token": token}
 
 
 @api_router.get("/auth/me")

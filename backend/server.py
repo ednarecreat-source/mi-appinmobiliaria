@@ -610,24 +610,29 @@ async def admin_delete_user(uid: str, admin: User = Depends(get_admin_user)):
     target = await db.users.find_one({"user_id": uid}, {"_id": 0})
     if not target:
         raise HTTPException(404, "Usuario no encontrado")
+    if target.get("email", "").lower() == ADMIN_EMAIL:
+        raise HTTPException(403, "No puedes eliminar al administrador semilla")
     if target.get("is_admin"):
         raise HTTPException(403, "No puedes borrar a un administrador")
     await db.users.delete_one({"user_id": uid})
     await db.user_sessions.delete_many({"user_id": uid})
-    # Remove this user from any workspace member_ids
     await db.workspaces.update_many({"member_ids": uid}, {"$pull": {"member_ids": uid}})
-    # Optionally: cascade delete data owned by this user
     return {"ok": True, "deleted": uid}
 
 
+class AdminToggleIn(BaseModel):
+    is_admin: bool
+
+
 @api_router.put("/admin/users/{uid}/admin")
-async def admin_toggle_admin(uid: str, payload: dict, _: User = Depends(get_admin_user)):
-    is_admin = bool(payload.get("is_admin", False))
+async def admin_toggle_admin(uid: str, payload: AdminToggleIn, admin: User = Depends(get_admin_user)):
     target = await db.users.find_one({"user_id": uid}, {"_id": 0})
     if not target:
         raise HTTPException(404, "Usuario no encontrado")
-    await db.users.update_one({"user_id": uid}, {"$set": {"is_admin": is_admin}})
-    return {"ok": True, "user_id": uid, "is_admin": is_admin}
+    if target.get("email", "").lower() == ADMIN_EMAIL and not payload.is_admin:
+        raise HTTPException(403, "No puedes degradar al administrador semilla")
+    await db.users.update_one({"user_id": uid}, {"$set": {"is_admin": payload.is_admin}})
+    return {"ok": True, "user_id": uid, "is_admin": payload.is_admin}
 
 
 # ============ WORKSPACES ============

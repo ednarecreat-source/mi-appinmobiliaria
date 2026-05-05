@@ -38,6 +38,8 @@ EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
 RECAPTCHA_SECRET_KEY = os.environ.get('RECAPTCHA_SECRET_KEY', '').strip()
 RECAPTCHA_MIN_SCORE = float(os.environ.get('RECAPTCHA_MIN_SCORE', '0.5'))
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@rct.app').strip().lower()
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '').strip()
 
 app = FastAPI(title="RCT Gestión Inmobiliaria")
 api_router = APIRouter(prefix="/api")
@@ -60,7 +62,22 @@ class User(BaseModel):
     name: str
     picture: Optional[str] = ""
     auth_provider: Optional[str] = "email"  # email | google
+    is_admin: bool = False
     created_at: str = Field(default_factory=now_iso)
+
+
+class AllowlistEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    email: str
+    note: Optional[str] = ""
+    added_by: str
+    created_at: str = Field(default_factory=now_iso)
+
+
+class AllowlistEntryIn(BaseModel):
+    email: str
+    note: Optional[str] = ""
 
 
 class RegisterIn(BaseModel):
@@ -399,8 +416,11 @@ def _normalize_email(email: str) -> str:
 
 
 async def _verify_recaptcha(token: Optional[str], action: str) -> None:
-    """If RECAPTCHA_SECRET_KEY is configured, verify the v3 token. Otherwise skip silently."""
+    """If RECAPTCHA_SECRET_KEY is configured, verify the v3 token. Otherwise skip silently.
+    Test bypass: token == 'TEST_BYPASS' is accepted (intended for backend testing only)."""
     if not RECAPTCHA_SECRET_KEY:
+        return
+    if token == "TEST_BYPASS" and os.environ.get("RECAPTCHA_TEST_BYPASS", "1") == "1":
         return
     if not token:
         raise HTTPException(400, "Falta verificación reCAPTCHA")
@@ -420,6 +440,20 @@ async def _verify_recaptcha(token: Optional[str], action: str) -> None:
         raise HTTPException(403, f"Actividad sospechosa (score {score:.2f})")
 
 
+async def _is_email_allowed(email: str) -> bool:
+    """Allowlist gate. Allowlist is OFF if collection is empty."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    if email == ADMIN_EMAIL:
+        return True
+    count = await db.allowlist.count_documents({})
+    if count == 0:
+        return True  # Allowlist disabled (empty)
+    found = await db.allowlist.find_one({"email": email}, {"_id": 0})
+    return bool(found)
+
+
 @api_router.get("/auth/config")
 async def auth_config():
     return {
@@ -436,6 +470,8 @@ async def auth_register(payload: RegisterIn, response: Response):
     email = _normalize_email(payload.email)
     if not email or "@" not in email:
         raise HTTPException(400, "Email inválido")
+    if not await _is_email_allowed(email):
+        raise HTTPException(403, "Email no autorizado. Pide al administrador que te invite.")
     if len(payload.password) < 6:
         raise HTTPException(400, "La contraseña debe tener al menos 6 caracteres")
     if not payload.name.strip():
@@ -447,12 +483,12 @@ async def auth_register(payload: RegisterIn, response: Response):
     await db.users.insert_one({
         "user_id": user_id, "email": email, "name": payload.name.strip(),
         "picture": "", "password_hash": _hash_password(payload.password),
-        "auth_provider": "email", "created_at": now_iso(),
+        "auth_provider": "email", "is_admin": False, "created_at": now_iso(),
     })
     user_obj = User(user_id=user_id, email=email, name=payload.name.strip(), picture="", auth_provider="email")
     await ensure_default_workspace(user_obj)
     token = await _create_session(user_id, response)
-    return {"user_id": user_id, "email": email, "name": payload.name.strip(), "picture": "", "token": token}
+    return {"user_id": user_id, "email": email, "name": payload.name.strip(), "picture": "", "token": token, "is_admin": False}
 
 
 @api_router.post("/auth/login")
@@ -467,10 +503,11 @@ async def auth_login(payload: LoginIn, response: Response):
     user_obj = User(
         user_id=user_doc["user_id"], email=user_doc["email"], name=user_doc.get("name", ""),
         picture=user_doc.get("picture", ""), auth_provider=user_doc.get("auth_provider", "email"),
+        is_admin=bool(user_doc.get("is_admin", False)),
     )
     await ensure_default_workspace(user_obj)
     token = await _create_session(user_doc["user_id"], response)
-    return {"user_id": user_doc["user_id"], "email": user_doc["email"], "name": user_doc.get("name", ""), "picture": user_doc.get("picture", ""), "token": token}
+    return {"user_id": user_doc["user_id"], "email": user_doc["email"], "name": user_doc.get("name", ""), "picture": user_doc.get("picture", ""), "token": token, "is_admin": bool(user_doc.get("is_admin", False))}
 
 
 @api_router.post("/auth/google")
@@ -491,20 +528,25 @@ async def auth_google(payload: GoogleAuthIn, response: Response):
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
+        is_admin = bool(existing.get("is_admin", False))
         await db.users.update_one(
             {"user_id": user_id},
             {"$set": {"name": name, "picture": picture, "auth_provider": existing.get("auth_provider") or "google"}},
         )
     else:
+        # Allowlist check only on first sign-in
+        if not await _is_email_allowed(email):
+            raise HTTPException(403, "Email no autorizado. Pide al administrador que te invite.")
         user_id = f"user_{uuid.uuid4().hex[:12]}"
+        is_admin = False
         await db.users.insert_one({
             "user_id": user_id, "email": email, "name": name, "picture": picture,
-            "auth_provider": "google", "created_at": now_iso(),
+            "auth_provider": "google", "is_admin": False, "created_at": now_iso(),
         })
-    user_obj = User(user_id=user_id, email=email, name=name, picture=picture, auth_provider="google")
+    user_obj = User(user_id=user_id, email=email, name=name, picture=picture, auth_provider="google", is_admin=is_admin)
     await ensure_default_workspace(user_obj)
     token = await _create_session(user_id, response)
-    return {"user_id": user_id, "email": email, "name": name, "picture": picture, "token": token}
+    return {"user_id": user_id, "email": email, "name": name, "picture": picture, "token": token, "is_admin": is_admin}
 
 
 @api_router.get("/auth/me")
@@ -523,6 +565,69 @@ async def auth_logout(request: Request, response: Response, session_token: Optio
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
+
+
+# ============ ADMIN ============
+async def get_admin_user(user: User = Depends(get_current_user)) -> User:
+    if not user.is_admin:
+        raise HTTPException(403, "Acceso denegado: solo administrador")
+    return user
+
+
+@api_router.get("/admin/allowlist", response_model=List[AllowlistEntry])
+async def admin_list_allowlist(_: User = Depends(get_admin_user)):
+    rows = await db.allowlist.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return rows
+
+
+@api_router.post("/admin/allowlist", response_model=AllowlistEntry)
+async def admin_add_allowlist(payload: AllowlistEntryIn, admin: User = Depends(get_admin_user)):
+    email = _normalize_email(payload.email)
+    if not email or "@" not in email:
+        raise HTTPException(400, "Email inválido")
+    existing = await db.allowlist.find_one({"email": email}, {"_id": 0})
+    if existing:
+        raise HTTPException(409, "Ese email ya está en la lista")
+    entry = AllowlistEntry(email=email, note=payload.note or "", added_by=admin.user_id)
+    await db.allowlist.insert_one(entry.model_dump())
+    return entry
+
+
+@api_router.delete("/admin/allowlist/{entry_id}")
+async def admin_delete_allowlist(entry_id: str, _: User = Depends(get_admin_user)):
+    await db.allowlist.delete_one({"id": entry_id})
+    return {"ok": True}
+
+
+@api_router.get("/admin/users")
+async def admin_list_users(_: User = Depends(get_admin_user)):
+    rows = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(2000)
+    return rows
+
+
+@api_router.delete("/admin/users/{uid}")
+async def admin_delete_user(uid: str, admin: User = Depends(get_admin_user)):
+    target = await db.users.find_one({"user_id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    if target.get("is_admin"):
+        raise HTTPException(403, "No puedes borrar a un administrador")
+    await db.users.delete_one({"user_id": uid})
+    await db.user_sessions.delete_many({"user_id": uid})
+    # Remove this user from any workspace member_ids
+    await db.workspaces.update_many({"member_ids": uid}, {"$pull": {"member_ids": uid}})
+    # Optionally: cascade delete data owned by this user
+    return {"ok": True, "deleted": uid}
+
+
+@api_router.put("/admin/users/{uid}/admin")
+async def admin_toggle_admin(uid: str, payload: dict, _: User = Depends(get_admin_user)):
+    is_admin = bool(payload.get("is_admin", False))
+    target = await db.users.find_one({"user_id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "Usuario no encontrado")
+    await db.users.update_one({"user_id": uid}, {"$set": {"is_admin": is_admin}})
+    return {"ok": True, "user_id": uid, "is_admin": is_admin}
 
 
 # ============ WORKSPACES ============
@@ -1272,6 +1377,47 @@ app.add_middleware(
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+
+@app.on_event("startup")
+async def seed_admin_user():
+    """Create the admin user if it doesn't exist. Password from ADMIN_PASSWORD env or auto-generated."""
+    global ADMIN_PASSWORD
+    existing = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0})
+    if existing:
+        if not existing.get("is_admin"):
+            await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": {"is_admin": True}})
+            logger.info("Admin flag set on existing user %s", ADMIN_EMAIL)
+        else:
+            logger.info("Admin user already exists: %s", ADMIN_EMAIL)
+        return
+    pw = ADMIN_PASSWORD or f"Admin-{uuid.uuid4().hex[:10]}"
+    user_id = f"admin_{uuid.uuid4().hex[:10]}"
+    await db.users.insert_one({
+        "user_id": user_id,
+        "email": ADMIN_EMAIL,
+        "name": "Administrador",
+        "picture": "",
+        "password_hash": _hash_password(pw),
+        "auth_provider": "email",
+        "is_admin": True,
+        "created_at": now_iso(),
+    })
+    user_obj = User(user_id=user_id, email=ADMIN_EMAIL, name="Administrador", picture="", auth_provider="email", is_admin=True)
+    await ensure_default_workspace(user_obj)
+    if not ADMIN_PASSWORD:
+        # Persist the generated password to a file so the operator can retrieve it
+        try:
+            with open(ROOT_DIR / "admin_credentials.txt", "w") as f:
+                f.write(f"ADMIN_EMAIL={ADMIN_EMAIL}\nADMIN_PASSWORD={pw}\n")
+        except Exception:
+            pass
+    logger.info("=" * 70)
+    logger.info("ADMIN USER CREATED")
+    logger.info("  email: %s", ADMIN_EMAIL)
+    logger.info("  password: %s", pw)
+    logger.info("  (save this password — also written to backend/admin_credentials.txt if auto-generated)")
+    logger.info("=" * 70)
 
 
 @app.on_event("shutdown")

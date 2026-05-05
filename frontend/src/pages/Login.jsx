@@ -8,14 +8,14 @@ import { Leaf, Sparkles, Building2, Wallet, Globe2, Eye, EyeOff, Mail, Lock, Use
 import { toast } from "sonner";
 
 function loadScript(src, id) {
-  if (document.getElementById(id)) {
-    return new Promise((resolve) => {
-      const t = document.getElementById(id);
-      if (t.dataset.loaded === "true") return resolve();
-      t.addEventListener("load", () => resolve(), { once: true });
-    });
-  }
   return new Promise((resolve, reject) => {
+    const existing = document.getElementById(id);
+    if (existing) {
+      if (existing.dataset.loaded === "true") return resolve();
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", reject, { once: true });
+      return;
+    }
     const s = document.createElement("script");
     s.id = id; s.src = src; s.async = true; s.defer = true;
     s.onload = () => { s.dataset.loaded = "true"; resolve(); };
@@ -26,18 +26,36 @@ function loadScript(src, id) {
 
 async function executeRecaptcha(siteKey, action) {
   if (!siteKey) return null;
-  await loadScript(`https://www.google.com/recaptcha/api.js?render=${siteKey}`, "recaptcha-v3");
+  try {
+    await loadScript(`https://www.google.com/recaptcha/api.js?render=${siteKey}`, "recaptcha-v3");
+  } catch (e) {
+    console.warn("reCAPTCHA script failed to load", e);
+    return null;
+  }
+  // Race against an 8s timeout so the form never hangs forever
   return new Promise((resolve) => {
-    const tryRun = () => {
-      if (window.grecaptcha?.ready) {
-        window.grecaptcha.ready(() => {
-          window.grecaptcha.execute(siteKey, { action }).then(resolve).catch(() => resolve(null));
-        });
+    let resolved = false;
+    const finish = (v) => { if (!resolved) { resolved = true; resolve(v); } };
+    const start = Date.now();
+    const tick = () => {
+      if (resolved) return;
+      if (Date.now() - start > 8000) return finish(null);
+      if (window.grecaptcha?.execute && window.grecaptcha?.ready) {
+        try {
+          window.grecaptcha.ready(() => {
+            window.grecaptcha.execute(siteKey, { action })
+              .then((token) => finish(token))
+              .catch((err) => { console.warn("grecaptcha.execute error", err); finish(null); });
+          });
+        } catch (e) {
+          console.warn("grecaptcha.ready error", e);
+          finish(null);
+        }
       } else {
-        setTimeout(tryRun, 80);
+        setTimeout(tick, 100);
       }
     };
-    tryRun();
+    tick();
   });
 }
 
@@ -235,6 +253,15 @@ export default function Login() {
             ) : (
               <>¿No tienes cuenta?{" "}
                 <button onClick={() => setMode("register")} className="text-sage-700 font-semibold hover:underline" data-testid="switch-to-register">Crea una</button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+text-sage-700 font-semibold hover:underline" data-testid="switch-to-register">Crea una</button>
               </>
             )}
           </div>

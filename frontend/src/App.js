@@ -11,12 +11,13 @@ import Vacation from "@/pages/Vacation";
 import Bank from "@/pages/Bank";
 import History from "@/pages/History";
 import WorkspaceSettings from "@/pages/WorkspaceSettings";
+import Admin from "@/pages/Admin";
 import { Toaster } from "@/components/ui/sonner";
-import { Building2, LayoutDashboard, Users, Receipt, CalendarDays, Menu, X, Leaf, LogOut, Landmark, History as HistoryIcon, Settings, ChevronDown } from "lucide-react";
+import { Building2, LayoutDashboard, Users, Receipt, CalendarDays, Menu, X, Leaf, LogOut, Landmark, History as HistoryIcon, Settings, ChevronDown, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 
-function Sidebar({ open, onClose }) {
+function Sidebar({ open, onClose, isAdmin }) {
   const items = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
     { to: "/inmuebles", label: "Inmuebles", icon: Building2, testid: "nav-properties" },
@@ -25,6 +26,7 @@ function Sidebar({ open, onClose }) {
     { to: "/banco", label: "Banco", icon: Landmark, testid: "nav-bank" },
     { to: "/vacacional", label: "Vacacional", icon: CalendarDays, testid: "nav-vacation" },
     { to: "/historico", label: "Histórico", icon: HistoryIcon, testid: "nav-history" },
+    ...(isAdmin ? [{ to: "/admin", label: "Admin", icon: ShieldCheck, testid: "nav-admin" }] : []),
   ];
   return (
     <aside className={`fixed lg:static z-40 top-0 left-0 h-full w-64 bg-cream-card border-r border-border flex flex-col transition-transform ${open ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`} data-testid="sidebar">
@@ -92,9 +94,10 @@ function WorkspaceMenu() {
 
 function Shell() {
   const [open, setOpen] = useState(false);
+  const { user } = useAuth();
   return (
     <div className="min-h-screen flex text-ink">
-      <Sidebar open={open} onClose={() => setOpen(false)} />
+      <Sidebar open={open} onClose={() => setOpen(false)} isAdmin={!!user?.is_admin} />
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-20 bg-cream-card/80 backdrop-blur-sm border-b border-border flex items-center px-4 lg:px-10 sticky top-0 z-30">
           <button className="lg:hidden mr-3 text-ink-soft" onClick={() => setOpen(true)} data-testid="sidebar-open"><Menu className="w-5 h-5" /></button>
@@ -116,6 +119,7 @@ function Shell() {
             <Route path="/vacacional" element={<Vacation />} />
             <Route path="/historico" element={<History />} />
             <Route path="/workspace" element={<WorkspaceSettings />} />
+            <Route path="/admin" element={<Admin />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>

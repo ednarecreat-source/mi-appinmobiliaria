@@ -1,0 +1,46 @@
+{
+  "summary": "Iter 7 backend-only testing of new admin/allowlist features + registration end-to-end. 24/24 pytest tests pass against the public preview URL. Verified: (1) seeded admin user admin@rct.app/Admin-RCT-2026! logs in returning is_admin=true, token, no _id/password_hash leak; (2) /api/admin/allowlist GET 403 for non-admin, 401 without token, 200 for admin; POST 400 on invalid email, 200 with persistence (verified via re-GET), 409 on duplicate; DELETE removes entry; (3) /api/admin/users 403 for non-admin, 200 for admin with NO password_hash and NO _id in any row; (4) PUT /api/admin/users/{uid}/admin toggles is_admin both ways and persists; (5) DELETE /api/admin/users/{uid} cannot delete an admin (403), and for a normal user it cascades — sessions are cleaned (victim's Bearer token immediately returns 401 on /auth/me) and the user disappears from /admin/users; (6) Allowlist gate behaviour: empty=open (registration succeeds), non-empty=registration with email NOT in list returns 403 'Email no autorizado', email IN list succeeds, admin email always allowed; (7) register/login/google all return is_admin in the response body; (8) regression: properties CRUD, /dashboard/stats, /history/months, /bank/transactions, /workspaces all reachable with Bearer auth; deep _id/password_hash leak scan across 9 endpoints came back clean. reCAPTCHA test bypass token 'TEST_BYPASS' works as documented. Cleanup confirmed (0 iter7 users/allowlist entries remain after suite).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/allowlist", "issue": "POST returns 200 (not 201) on creation. Spec said 'creates entry' — current behaviour is functional but inconsistent with REST convention; status_code=201 would be more idiomatic."},
+      {"endpoint": "DELETE /api/admin/allowlist/{id}", "issue": "Returns 200 {ok:true} even when entry_id does not exist (no 404). Idempotent but silent — could mask client bugs."},
+      {"endpoint": "PUT /api/admin/users/{uid}/admin", "issue": "Accepts a generic dict payload (no Pydantic model) — `is_admin` defaulted to False if missing, so a malformed body silently demotes the user. Recommend a typed model with required field."},
+      {"endpoint": "DELETE /api/admin/users/{uid}", "issue": "An admin can delete themselves only if their is_admin flag was previously toggled off; current code allows toggling the seeded admin to is_admin=False via PUT /admin/users/{uid}/admin (no special protection on the seeded admin). Combined with delete-by-non-admin guard, an admin could demote and then delete themselves, locking the system out until backend restart re-seeds. Consider preventing demotion/deletion of the seeded ADMIN_EMAIL."},
+      {"endpoint": "/api/admin/users", "issue": "No pagination — returns up to 2000 users in one shot. Fine for now but watch for growth."},
+      {"endpoint": "DELETE /api/admin/users/{uid}", "issue": "Spec says 'cascade delete data owned by this user'; code only cleans sessions and removes from workspace.member_ids. Workspaces OWNED by the deleted user are left orphaned (no member_ids match → unreachable but still in DB), and any properties/units/tenants/etc. created in those workspaces remain. Recommend either reassigning ownership or deleting workspaces+children."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_admin_iter7.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Use typed Pydantic body for PUT /admin/users/{uid}/admin to prevent silent demotion on malformed payloads.",
+    "(Optional) Protect seeded ADMIN_EMAIL from demotion and self-deletion to avoid locking out the system.",
+    "(Optional) Cascade ownership/cleanup of workspaces+children when admin deletes a user.",
+    "(Optional) Return 201 on POST /admin/allowlist and 404 on DELETE /admin/allowlist/{missing_id}.",
+    "(Optional, reiterated) Split server.py (~1426 lines) into routers/ and services/."
+  ],
+  "critical_code_review_comments": [
+    "seed_admin_user runs on startup and is idempotent — verified by logging in immediately after backend restart; if the user existed without is_admin, the flag is set automatically. Good.",
+    "_is_email_allowed correctly treats empty allowlist collection as 'gate OFF' (returns True) and special-cases ADMIN_EMAIL — verified end-to-end.",
+    "/api/admin/users projection {'_id':0,'password_hash':0} confirmed: scanned all returned rows, neither field present.",
+    "Test bypass token 'TEST_BYPASS' is gated by RECAPTCHA_TEST_BYPASS env (default '1') AND requires RECAPTCHA_SECRET_KEY to be set — appropriate scoping for backend tests; should be turned off in production by setting RECAPTCHA_TEST_BYPASS=0.",
+    "Google sign-in branch correctly skips allowlist for existing users and enforces it only on first sign-in (code-reviewed; cannot exercise without a real Google JWT).",
+    "Bearer auth + cookie dual-state still works; admin endpoints all respect get_current_user → get_admin_user dependency chain; non-admin gets 403, no leak.",
+    "DELETE /admin/users/{uid} cleans db.user_sessions for that uid — confirmed by sending Bearer with the deleted user's token afterwards: server returns 401 immediately.",
+    "No _id leak on any admin endpoint or domain endpoint scanned (9 paths)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_iter7.py (new)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "not tested (per testing_type=backend only)"},
+  "test_credentials": "Admin: admin@rct.app / Admin-RCT-2026! (seeded). Test users: dynamically registered test_iter7_*@example.com / Secret123! per run; cleaned up by autouse module fixture and manually verified empty afterwards.",
+  "seed_data_creation": "Per-run: created ~2-4 test users (test_iter7_user_*, test_iter7_victim_*, test_iter7_gate_ok_*) and ~3-4 allowlist entries (test_iter7_a_*, test_iter7_dup_*, test_iter7_del_*, test_iter7_dummy_*). All deleted by teardown; verified 0 iter7 users / 0 iter7 allowlist entries remain post-run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 7 suite at /app/backend/tests/test_admin_iter7.py covers admin/allowlist + registration regression. Use recaptcha_token='TEST_BYPASS' for register/login. Admin credentials hard-coded in suite and in /app/memory (admin@rct.app / Admin-RCT-2026!). Suite is idempotent and cleans up after itself (lowercase test_iter7_ prefix, scanned in autouse teardown). Iter 5 (test_auth_iter5.py) and Iter 6 (test_auth_iter6.py) suites still apply for the deeper auth surface. Allowlist now has whatever entries the user/admin manually added before iter7 ran — iter7 leaves them untouched. Production caveat: RECAPTCHA_TEST_BYPASS=1 is currently set; should be removed before going live.",
+  "rca of the issue": "Initial test run failed because allowlist already had entries from previous manual interactions, so the normal_user fixture's plain register call hit the gate. Resolved within the test by having the fixture pre-add the email to the allowlist via the admin endpoint (admin_token fixture available at module scope). All 24 tests pass after that single adjustment to the test fixture (no production code changes were needed)."
+}
